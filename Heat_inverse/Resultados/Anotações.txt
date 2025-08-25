@@ -1,0 +1,2 @@
+50k, sem mini batches:
+T = 3h28min
