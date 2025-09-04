@@ -1,9 +1,3 @@
-"""Backend supported: tensorflow.compat.v1, paddle
-
-Implementation of the wave propagation example in paper https://arxiv.org/abs/2012.10047.
-References:
-    https://github.com/PredictiveIntelligenceLab/MultiscalePINNs.
-"""
 import deepxde as dde
 import numpy as np
 
@@ -31,7 +25,7 @@ def func(x):
     )
 
 
-geom = dde.geometry.Interval(0, 1)
+geom = dde.geometry.Interval(-1, 1)
 timedomain = dde.geometry.TimeDomain(0, 1)
 geomtime = dde.geometry.GeometryXTime(geom, timedomain)
 
@@ -47,14 +41,14 @@ data = dde.data.TimePDE(
     geomtime,
     pde,
     [bc, ic_1, ic_2],
-    num_domain=360,
-    num_boundary=360,
-    num_initial=360,
+    num_domain=4096,
+    num_boundary=400,
+    num_initial=100,
     solution=func,
-    num_test=10000,
+    num_test=4096,
 )
 
-layer_size = [2] + [100] * 3 + [1]
+layer_size = [2] + [32] * 3 + [1]
 activation = "tanh"
 initializer = "Glorot uniform"
 net = dde.nn.STMsFFN(

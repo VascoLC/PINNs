@@ -1,12 +1,11 @@
-"""Backend supported: tensorflow.compat.v1, tensorflow, pytorch, paddle"""
 
 import os
-
 os.environ["DDE_BACKEND"] = "tensorflow.compat.v1"
 
 import deepxde as dde
 import numpy as np
 import matplotlib.pyplot as plt
+import time
 
 C = dde.Variable(1.5)
 
@@ -40,30 +39,20 @@ ic_2 = dde.icbc.OperatorBC(
     lambda x, _: dde.utils.isclose(x[1], 0),
 )
 
-observe_x = np.vstack((np.linspace(-1, 1, num=400), np.full((400), 1))).T
+observe_x = np.vstack((np.linspace(-1, 1, num=500), np.full((500), 1))).T
 observe_y = dde.icbc.PointSetBC(observe_x, U_exact(observe_x), component=0)
 
 data = dde.data.TimePDE(
     geomtime,
     pde,
     [bc, ic,ic_2, observe_y],
-    num_domain=800,
-    num_boundary=750,
-    num_initial=750,
+    num_domain=4096,
+    num_boundary=400,
+    num_initial=400,
     solution=U_exact,
-    num_test=10000,
+    num_test=4096,
 )
-'''
-net = dde.nn.MsFFN(
-    [2, 64, 64, 64, 64, 1],
-    "tanh",
-    "Glorot uniform",
-    sigmas=[1,2,5,10]
-)
-model = dde.Model(data, net)
-'''
 
-# In order to use this feature, I do have to use sigmas for both x and t
 net = dde.nn.STMsFFN(
     [2, 64, 64, 64, 64, 1],
     "tanh",
@@ -76,13 +65,20 @@ model = dde.Model(data, net)
 
 model.compile("adam", lr=0.001, metrics=["l2 relative error"], external_trainable_variables=C)
 variable = dde.callbacks.VariableValue(C, period=1000)
-losshistory, train_state = model.train(iterations=100000, callbacks=[variable])
+
+start_time = time.time()
+
+losshistory, train_state = model.train(iterations=100_000, callbacks=[variable])
+
+end_time = time.time()
+elapsed = end_time - start_time
+print(f"Training completed in {elapsed:.2f} seconds")
 
 # Save and plot the solution results
 dde.saveplot(losshistory, train_state, issave=True, isplot=True)
 
-x_test = np.linspace(-1, 1, 256)  
-t_test = np.linspace(0, 1, 100)   
+x_test = np.linspace(-1, 1, 500)  
+t_test = np.linspace(0, 1, 500)   
 
 # Create a meshgrid of x and t values
 X, T = np.meshgrid(x_test, t_test)
@@ -101,7 +97,7 @@ plt.figure(figsize=(12, 5))
 plt.subplot(1, 2, 1)
 plt.contourf(X, T, U_ref, levels=100, cmap="viridis")
 plt.colorbar()
-plt.title("Reference Solution $U(x,t)$")
+plt.title("Reference Solution with Fourier features $U(x,t)$")
 plt.xlabel("x")
 plt.ylabel("t")
 
@@ -109,7 +105,7 @@ plt.ylabel("t")
 plt.subplot(1, 2, 2)
 plt.contourf(X, T, U_pred, levels=100, cmap="viridis")
 plt.colorbar()
-plt.title("PINN Predicted Solution")
+plt.title("PINN Predicted Solution with Fourier features")
 plt.xlabel("x")
 plt.ylabel("t")
 

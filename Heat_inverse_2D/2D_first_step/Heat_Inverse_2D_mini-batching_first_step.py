@@ -66,7 +66,7 @@ xyt_ic = tf.convert_to_tensor(xyt_ic_np)
 u_ic   = tf.convert_to_tensor(u_ic_np)
 
 # 3.2) Boundary conditions
-n_bc = 200 
+n_bc = 400 
 
 # Dirichlet BC on x=0 and x=1
 # x=0
@@ -185,7 +185,7 @@ num_obs = XYT_obs_np.shape[0]
 num_batches = int(np.ceil(num_obs / batch_size_obs))
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-epochs = 5000 # In this case corresponds to 30000 iterations of the optimiser
+epochs = 10000 # In this case corresponds to 60000 iterations of the optimiser
 
 loss_history = [] 
 

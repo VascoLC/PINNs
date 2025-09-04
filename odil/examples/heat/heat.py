@@ -247,7 +247,7 @@ def parse_args():
         "--arch_k", type=int, nargs="*", default=[5, 5], help="Network architecture for inferred conductivity"
     )
     parser.add_argument("--solver", type=str, choices=("pinn", "odil"), default="odil", help="Grid size in x")
-    parser.add_argument("--infer_k", type=int, default=1, help="Infer conductivity")
+    parser.add_argument("--infer_k", type=int, default=0, help="Infer conductivity")
     parser.add_argument("--kxreg", type=float, default=0, help="Space regularization weight")
     parser.add_argument("--kxregdecay", type=float, default=0, help="Decay period of kxreg")
     parser.add_argument("--ktreg", type=float, default=0, help="Time regularization weight")
@@ -257,7 +257,7 @@ def parse_args():
     parser.add_argument("--kimp", type=float, default=10, help="Weight of imposed points")
     parser.add_argument("--keep_frozen", type=int, default=1, help="Respect frozen attribute for fields")
     parser.add_argument("--keep_init", type=int, default=1, help="Impose initial conditions")
-    parser.add_argument("--ref_path", type=str,default = "out_heat_direct/ref_solution.pickle",help="Path to reference solution *.pickle")
+    parser.add_argument("--ref_path", type=str,help="Path to reference solution *.pickle")
     parser.add_argument(
         "--imposed",
         type=str,
@@ -270,7 +270,7 @@ def parse_args():
     parser.add_argument("--kmax", type=float, default=0.1, help="Maximum value of conductivity")
     odil.util.add_arguments(parser)
     odil.linsolver.add_arguments(parser)
-    parser.set_defaults(outdir="out_heat_inverse_test2")
+    parser.set_defaults(outdir="out_heat_direct")
     parser.set_defaults(linsolver="direct")
     parser.set_defaults(optimizer="adam")
     parser.set_defaults(lr=0.001)

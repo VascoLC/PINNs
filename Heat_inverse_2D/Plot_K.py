@@ -5,9 +5,11 @@ import matplotlib.pyplot as plt
 import os
 from tensorflow import keras
 
+
+'''
 # Conductivity vs Temperature
 #df = pd.read_csv("2D_second_step/fields_over_time/field_at_t_0.0.csv")
-df = pd.read_csv("2D_first_step/Sim2/fields_over_time/field_at_t_0.0.csv")
+df = pd.read_csv("2D_first_step/fields_over_time/field_at_t_0.4.csv")
 df_t1 = df[np.isclose(df["t"], 0)]
 
 u_field = df[["u"]].values.astype(np.float32)
@@ -28,7 +30,7 @@ plt.title(f"K vs U")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
-
+'''
 '''
 # Training Loss
 df = pd.read_csv("training_loss_log.csv")
@@ -44,3 +46,29 @@ plt.tight_layout()
 
 plt.show()
 '''
+
+fields = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+fig, axes = plt.subplots(2, 3, figsize=(12,8))
+vmin = 0.0
+vmax = 1.0
+
+for ax, i in zip(axes.ravel(), fields):
+    filename = f"C:/PINNs_Git/PINNs/Heat_inverse_2D/2D_second_step/fields_over_time/field_at_t_{i:.1f}.csv"
+    sim_data = pd.read_csv(filename)
+
+    grid = sim_data.pivot(index="y", columns="x", values="u")
+    X, Y = np.meshgrid(grid.columns.values, grid.index.values)
+    u_field = grid.values
+    vmax = np.max(u_field)
+    cf = ax.contourf(X, Y, u_field, levels=100, vmin =vmin, vmax=vmax,cmap = "viridis")
+    cbar = fig.colorbar(cf, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_ticks(np.arange(0.0, vmax , 0.1))
+    cbar.ax.set_ylabel('u(x,y,t)')
+    ax.set_title(f"t = {i:.1f}")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.axis("equal")
+
+plt.tight_layout()
+plt.show()

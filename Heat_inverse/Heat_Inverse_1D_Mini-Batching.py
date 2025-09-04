@@ -51,19 +51,7 @@ k_obs   = tf.convert_to_tensor(k_obs_np)
 
 # Initial condition
 
-'''
 n_ic = 400
-x_ic = np.random.rand(n_ic,1)
-t_ic = np.zeros((n_ic,1), dtype=np.float32)
-xt_ic_np = np.hstack([x_ic,t_ic]).astype(np.float32)
-
-u_ic_np = (np.exp(-50*(x_ic-0.5)**2)-np.exp(-50*0.5**2)).astype(np.float32)
-
-xt_ic = tf.convert_to_tensor(xt_ic_np)
-u_ic   = tf.convert_to_tensor(u_ic_np)
-'''
-
-n_ic = 100
 
 xt_ic_np = df_1[["x","t"]].values.astype(np.float32)[0:n_ic,:]
 u_ic_np = df_1[["u"]].values.astype(np.float32)[0:n_ic,:]
@@ -164,7 +152,7 @@ num_batches = int(np.ceil(num_obs / batch_size_obs))
 # ------------------------------
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-epochs = 10_000
+epochs = 40_000
 loss_history = [] 
 
 start_time = time.perf_counter()
@@ -228,7 +216,7 @@ df_final = pd.DataFrame({
 
 df_final.to_csv("Heat_Inverse_1D_solution.csv", index=False)
 
-df_loss = pd.DataFrame(loss_history, columns=["epoch", "total_loss", "loss_u", "loss_k"])
+df_loss = pd.DataFrame(loss_history, columns=["epoch", "total_loss", "loss_u", "loss_k","loss_ic","loss_bc","loss_pde"])
 df_loss.to_csv("training_loss_log_1D_solution.csv", index=False)
 
 plt.figure(figsize=(7, 15))

@@ -59,7 +59,7 @@ xt_ic = tf.convert_to_tensor(xt_ic_np)
 u_ic   = tf.convert_to_tensor(u_ic_np)
 '''
 
-n_ic = 100
+n_ic = 400
 
 xt_ic_np = df_1[["x","t"]].values.astype(np.float32)[0:n_ic,:]
 u_ic_np = df_1[["u"]].values.astype(np.float32)[0:n_ic,:]
@@ -152,7 +152,7 @@ def compute_loss(xt_domain, xt_bc, u_bc, xt_ic, u_ic, xt_obs, u_obs, k_obs):
 # ------------------------------
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-epochs = 10_000
+epochs = 200_000
 
 loss_history = [] 
 

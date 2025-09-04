@@ -1,10 +1,10 @@
-"""Backend supported: tensorflow.compat.v1, tensorflow, pytorch, paddle"""
 import deepxde as dde
 import numpy as np
 import matplotlib.pyplot as plt
 from deepxde.backend import tf
 import os
 from datetime import datetime
+import time
 
 C = dde.Variable(1.5)
 
@@ -38,18 +38,18 @@ ic_2 = dde.icbc.OperatorBC(
     lambda x, _: dde.utils.isclose(x[1], 0),
 )
 
-observe_x = np.vstack((np.linspace(-1, 1, num=400), np.full((400), 1))).T
+observe_x = np.vstack((np.linspace(-1, 1, num=500), np.full((500), 1))).T
 observe_y = dde.icbc.PointSetBC(observe_x, U_exact(observe_x), component=0)
 
 data = dde.data.TimePDE(
     geomtime,
     pde,
     [bc, ic,ic_2, observe_y],
-    num_domain=8000,
-    num_boundary=750,
-    num_initial=750,
+    num_domain=4096,
+    num_boundary=400,
+    num_initial=400,
     solution=U_exact,
-    num_test=10000,
+    num_test=4096,
 )
 
 layer_size = [2] + [64] * 4 + [1]
@@ -62,7 +62,14 @@ model = dde.Model(data, net)
 
 model.compile("adam", lr=0.001, metrics=["l2 relative error"], external_trainable_variables=C)
 variable = dde.callbacks.VariableValue(C, period=1000)
-losshistory, train_state = model.train(iterations=75000, callbacks=[variable])
+
+start_time = time.time()
+
+losshistory, train_state = model.train(iterations=100_000, callbacks=[variable])
+
+end_time = time.time()
+elapsed = end_time - start_time
+print(f"Training completed in {elapsed:.2f} seconds")
 
 # Save and plot the solution results
 dde.saveplot(losshistory, train_state, issave=True, isplot=True)
