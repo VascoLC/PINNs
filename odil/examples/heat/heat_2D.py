@@ -4,7 +4,6 @@ import argparse
 import numpy as np
 import pickle
 import os
-
 import odil
 from odil import plotutil
 import matplotlib.pyplot as plt
