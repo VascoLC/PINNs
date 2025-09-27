@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import time
+from scipy.interpolate import RegularGridInterpolator
 
 # Neural Nets
 class NetU(tf.keras.Model):
@@ -34,7 +35,6 @@ class NetK(tf.keras.Model):
 # ------------------------------
 # Load measurement data at t
 # ------------------------------
-
 df_1 = pd.read_csv("Train_data_1D.csv")
 df = df_1.sample(n=500, random_state=42)
 
@@ -45,6 +45,21 @@ k_obs_np   = df[["k"]].values.reshape(-1, 1).astype(np.float32)  # (N, 1)
 XT_obs = tf.convert_to_tensor(XT_obs_np)
 u_obs   = tf.convert_to_tensor(u_obs_np)
 k_obs   = tf.convert_to_tensor(k_obs_np)
+
+
+'''
+df_1 = pd.read_csv("Train_data_1D.csv")
+df = df_1.sample(n=500, random_state=42)
+
+XT_obs_np = df[["x","t"]].values.astype(np.float32)   # (N, 2)
+u_obs_np   = df[["u"]].values.reshape(-1, 1).astype(np.float32)  # (N, 1)
+k_obs_np   = df[["k"]].values.reshape(-1, 1).astype(np.float32)  # (N, 1)
+
+XT_obs = tf.convert_to_tensor(XT_obs_np)
+u_obs   = tf.convert_to_tensor(u_obs_np)
+k_obs   = tf.convert_to_tensor(k_obs_np)
+'''
+
 
 # Initial condition
 '''
@@ -58,7 +73,17 @@ u_ic_np = (np.exp(-50*(x_ic-0.5)**2)-np.exp(-50*0.5**2)).astype(np.float32)
 xt_ic = tf.convert_to_tensor(xt_ic_np)
 u_ic   = tf.convert_to_tensor(u_ic_np)
 '''
+n_ic = 400
+x_ic = np.random.rand(n_ic,1)
+t_ic = np.zeros((n_ic,1), dtype=np.float32)
+xt_ic_np = np.hstack([x_ic,t_ic]).astype(np.float32)
 
+u_ic_np = (np.exp(-50*(x_ic-0.5)**2)-np.exp(-50*0.5**2)).astype(np.float32)
+
+xt_ic = tf.convert_to_tensor(xt_ic_np)
+u_ic   = tf.convert_to_tensor(u_ic_np)
+
+'''
 n_ic = 400
 
 xt_ic_np = df_1[["x","t"]].values.astype(np.float32)[0:n_ic,:]
@@ -66,6 +91,8 @@ u_ic_np = df_1[["u"]].values.astype(np.float32)[0:n_ic,:]
 
 xt_ic = tf.convert_to_tensor(xt_ic_np)
 u_ic = tf.convert_to_tensor(u_ic_np)
+'''
+
 
 # Boundary condition
 
@@ -143,7 +170,7 @@ def compute_loss(xt_domain, xt_bc, u_bc, xt_ic, u_ic, xt_obs, u_obs, k_obs):
     loss_k  = tf.reduce_mean(tf.square(k_pred_obs - k_obs))
 
     
-    total_loss = loss_pde + loss_ic + loss_bc + loss_u + loss_k
+    total_loss = loss_pde + loss_ic + loss_bc + loss_u 
 
     return total_loss, loss_u, loss_k
 
@@ -203,10 +230,10 @@ df_final = pd.DataFrame({
     "k": k_pred.flatten(),
 })
 
-df_final.to_csv("Heat_Inverse_1D_solution_NoBatching.csv", index=False)
+df_final.to_csv("Heat_Inverse_1D_solution_NoBatching_NoK.csv", index=False)
 
 df_loss = pd.DataFrame(loss_history, columns=["epoch", "total_loss", "loss_u", "loss_k"])
-df_loss.to_csv("training_loss_log_1D_solution_NoBatching.csv", index=False)
+df_loss.to_csv("training_loss_log_1D_solution_NoBatching_NoK.csv", index=False)
 
 plt.figure(figsize=(7, 15))
 cf = plt.contourf(Xg, Tg, u_pred, levels=100, cmap="viridis")

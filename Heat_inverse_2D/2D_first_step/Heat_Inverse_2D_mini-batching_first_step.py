@@ -145,7 +145,7 @@ def compute_loss(xyt_domain, xyt_bc_dirichlet, u_bc_dirichlet, xyt_bc_neumann, x
 
     # PDE residual loss
     res = compute_pde_residual(xyt_domain)
-    loss_pde = tf.reduce_mean(tf.square(res))
+    loss_pde =tf.reduce_mean(tf.square(res))
 
     # IC loss
     u_pred_ic = net_u(xyt_ic)
@@ -179,19 +179,50 @@ def compute_loss(xyt_domain, xyt_bc_dirichlet, u_bc_dirichlet, xyt_bc_neumann, x
 # ------------------------------
 # 8) Training loop (Adam)
 # ------------------------------
+optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+# --- START: Checkpoint Setup ---
+# Define a directory to save the checkpoints
+checkpoint_dir = './training_checkpoints'
+os.makedirs(checkpoint_dir, exist_ok=True)
+
+# Create a TensorFlow variable to track the epoch
+ckpt_epoch = tf.Variable(1, dtype=tf.int64)
+
+# Create a Checkpoint object to save models, optimizer, and epoch
+ckpt = tf.train.Checkpoint(step=ckpt_epoch, optimizer=optimizer, net_u=net_u, net_k=net_k)
+
+# Create a CheckpointManager to handle multiple checkpoint files
+manager = tf.train.CheckpointManager(ckpt, checkpoint_dir, max_to_keep=3)
+
+# Restore from the latest checkpoint if one exists
+ckpt.restore(manager.latest_checkpoint)
+if manager.latest_checkpoint:
+    print(f"Restored from {manager.latest_checkpoint}")
+    start_epoch = int(ckpt_epoch)
+    # Load previous loss history to continue logging
+    try:
+        loss_history_df = pd.read_csv("training_loss_log.csv")
+        loss_history = loss_history_df.values.tolist()
+        print(f"Loaded {len(loss_history)} previous log entries.")
+    except FileNotFoundError:
+        loss_history = []
+        print("Starting new training log.")
+else:
+    print("Initializing from scratch.")
+    start_epoch = 1
+    loss_history = []
 
 batch_size_obs = 100
 num_obs = XYT_obs_np.shape[0]
 num_batches = int(np.ceil(num_obs / batch_size_obs))
 
-optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
 epochs = 10000 # In this case corresponds to 60000 iterations of the optimiser
 
 loss_history = [] 
 
 start_time = time.perf_counter()
 
-for epoch in range(1, epochs+1):
+for epoch in range(start_epoch, epochs+1):
     indices = np.random.permutation(num_obs)
 
     for batch in range(num_batches):
@@ -214,8 +245,13 @@ for epoch in range(1, epochs+1):
     loss_history.append([epoch, total_loss.numpy(), loss_u.numpy(), loss_k.numpy()])
 
     if epoch % 200 == 0:
-        print(f"Epoch {epoch:04d} — Total Loss: {total_loss.numpy():.4e} | Loss_u: {loss_u.numpy():.4e} | Loss_k: {loss_k.numpy():.4e}")
-
+        error_u = np.sqrt(loss_u.numpy())
+        error_k = np.sqrt(loss_k.numpy())
+        print(f"Epoch {epoch:04d} — Total Loss: {total_loss.numpy():.4e} | Loss_u: {error_u.numpy():.4e} | Loss_k: {error_k.numpy():.4e}")
+        ckpt_epoch.assign(epoch) # Update the epoch variable
+        save_path = manager.save()
+        print(f"Saved checkpoint for epoch {epoch} at {save_path}")
+        
 end_time = time.perf_counter()
 elapsed = end_time - start_time
 print(f"\n*** Training completed in {elapsed:.2f} seconds. ***")

@@ -9,6 +9,7 @@ from odil import plotutil
 import matplotlib.pyplot as plt
 from odil import printlog
 from odil.runtime import tf
+import pandas as pd
 
 
 def get_init_u(t, x, mod):
@@ -111,13 +112,19 @@ def operator_odil(ctx):
         k = args.kimp * (np.prod(ctx.size()) / extra.imp_size) ** 0.5
         fuimp = extra.imp_mask * (u_st[0][0] - extra.imp_u) * k
         res += [("imp", fuimp)]
+        '''
+        (k_pred,) = ctx.domain.neural_net(ctx.state,"k_net")(extra.ref_uk)
+        k_pred = transform_k(k_pred, mod, args.kmax)
+        fimp_k = (k_pred - extra.ref_k) * 1
+        res += [("imp_k", fimp_k)]
+        '''
 
     # Regularization.
     if args.kxreg:
         k_ = args.kxreg * get_anneal_factor(epoch, args.kxregdecay)
         u_x = (u_st[0][0] - u_st[0][1]) / dx
         u_x = mod.where(ix == 0, ctx.cast(0), u_x)
-        k = mod.cast(k,u_x.dtype)
+        k = mod.cast(k_,u_x.dtype)
         fxreg= u_x * k
         res += [("xreg", fxreg)]
 
@@ -126,7 +133,7 @@ def operator_odil(ctx):
         u_t = (u_st[0][0] - u_st[1][0]) / dt
         u_t = mod.where(it == 0, ctx.cast(0), u_t)
         k = mod.cast(k,u_t.dtype)
-        ftreg = u_x * k
+        ftreg = u_t * k
         res += [("treg", ftreg)]
 
     if args.kwreg and args.infer_k:
@@ -247,17 +254,17 @@ def parse_args():
         "--arch_k", type=int, nargs="*", default=[5, 5], help="Network architecture for inferred conductivity"
     )
     parser.add_argument("--solver", type=str, choices=("pinn", "odil"), default="odil", help="Grid size in x")
-    parser.add_argument("--infer_k", type=int, default=0, help="Infer conductivity")
-    parser.add_argument("--kxreg", type=float, default=0, help="Space regularization weight")
-    parser.add_argument("--kxregdecay", type=float, default=0, help="Decay period of kxreg")
-    parser.add_argument("--ktreg", type=float, default=0, help="Time regularization weight")
-    parser.add_argument("--ktregdecay", type=float, default=0, help="Decay period of ktreg")
+    parser.add_argument("--infer_k", type=int, default=1, help="Infer conductivity")
+    parser.add_argument("--kxreg", type=float, default=0.8, help="Space regularization weight")
+    parser.add_argument("--kxregdecay", type=float, default=500, help="Decay period of kxreg")
+    parser.add_argument("--ktreg", type=float, default=0.8, help="Time regularization weight")
+    parser.add_argument("--ktregdecay", type=float, default=500, help="Decay period of ktreg")
     parser.add_argument("--kwreg", type=float, default=0, help="Regularization of neural network weights")
     parser.add_argument("--kwregdecay", type=float, default=0, help="Decay period of kwreg")
-    parser.add_argument("--kimp", type=float, default=10, help="Weight of imposed points")
+    parser.add_argument("--kimp", type=float, default=2, help="Weight of imposed points")
     parser.add_argument("--keep_frozen", type=int, default=1, help="Respect frozen attribute for fields")
     parser.add_argument("--keep_init", type=int, default=1, help="Impose initial conditions")
-    parser.add_argument("--ref_path", type=str,help="Path to reference solution *.pickle")
+    parser.add_argument("--ref_path", type=str,default="out_heat_direct_1D_256/data_00010.pickle", help="Path to reference solution *.pickle")#
     parser.add_argument(
         "--imposed",
         type=str,
@@ -270,14 +277,14 @@ def parse_args():
     parser.add_argument("--kmax", type=float, default=0.1, help="Maximum value of conductivity")
     odil.util.add_arguments(parser)
     odil.linsolver.add_arguments(parser)
-    parser.set_defaults(outdir="out_heat_direct")
+    parser.set_defaults(outdir="out_heat_inverse_1D_Imposed_solution")
     parser.set_defaults(linsolver="direct")
-    parser.set_defaults(optimizer="adam")
+    parser.set_defaults(optimizer="lbfgsb")
     parser.set_defaults(lr=0.001)
-    parser.set_defaults(double=0)
-    parser.set_defaults(multigrid=1)
+    parser.set_defaults(double=1)
+    parser.set_defaults(multigrid=0)
     parser.set_defaults(plotext="png", plot_title=1)
-    parser.set_defaults(plot_every=2000, report_every=500, history_full=10, history_every=100, frames=10)
+    parser.set_defaults(plot_every=1000, report_every=1, history_full=10, history_every=100, frames=10)
     return parser.parse_args()
 
 
@@ -425,7 +432,10 @@ def load_fields_interp(path, keys, domain):
 
     src_state = odil.State(fields={key: odil.Field() for key in keys})
     state = odil.State(fields={key: odil.Field() for key in keys})
-    odil.core.checkpoint_load(domain, src_state, path)
+    #odil.core.checkpoint_load(domain, src_state, path)
+    with open(path, 'rb') as f:
+       data = pickle.load(f)
+    src_state.fields['u'].array = data['state_u']
     x1, y1 = domain.points_1d()
     for key in keys:
         src_u = src_state.fields[key]
@@ -474,6 +484,46 @@ def make_problem(args):
 
     imp_mask, imp_points, imp_indices = get_imposed_mask(args, domain)
     imp_size = len(imp_points)
+
+    # --- START CORRECTED INSERTION FOR CSV EXPORT ---
+    # Get grid dimensions. domain.cshape is (Nt, Nx) here, so (T-rows, X-cols)
+    Nt_grid, Nx_grid = domain.cshape 
+
+    # Convert linear indices to (row_index, col_index) for the imp_u_grid
+    # Assuming row-major flattening (standard numpy)
+    imp_row_indices_np = imp_indices // Nx_grid  # Keep as NumPy for intermediate calculation
+    imp_col_indices_np = imp_indices % Nx_grid  # Keep as NumPy for intermediate calculation
+
+    # CRITICAL FIX: Convert NumPy indices to TensorFlow Tensors before using them to index 'imp_u'
+    # 'imp_u' is likely a TensorFlow Tensor because 'ref_u = domain.cast(ref_state.fields["u"].array)'
+    # 'domain.cast' converts to the backend's (TensorFlow's) tensor type.
+    imp_row_indices_tf = tf.constant(imp_row_indices_np, dtype=tf.int32)
+    imp_col_indices_tf = tf.constant(imp_col_indices_np, dtype=tf.int32)
+
+    # Extract u values from the imp_u grid at these specific indices
+    # Use tf.gather_nd for advanced indexing on TensorFlow Tensors
+    # You need to stack the row and column indices into a single (N, 2) tensor for gather_nd
+    indices_for_gather = tf.stack([imp_row_indices_tf, imp_col_indices_tf], axis=-1)
+    
+    # imp_u is a TensorFlow Tensor, so use TensorFlow's gather_nd for indexing
+    u_imposed_values_tf = tf.gather_nd(imp_u, indices_for_gather) 
+    
+    # Convert the resulting TensorFlow Tensor back to NumPy for CSV export
+    u_imposed_values = u_imposed_values_tf.numpy() 
+
+    # imp_points is already (500, 2) where columns are (t, x) and is a NumPy array
+    # Combine t, x, and u values into a single DataFrame for export
+    df_imposed_data = pd.DataFrame({
+        't': imp_points[:, 0], # First column of imp_points is t
+        'x': imp_points[:, 1], # Second column of imp_points is x
+        'u': u_imposed_values
+    })
+
+    # Save to CSV
+    output_csv_path = "imposed_data_with_u.csv"
+    df_imposed_data.to_csv(output_csv_path, index=False)
+    printlog(f"Exported imposed (t, x, u) data to '{output_csv_path}'")
+    # --- END CORRECTED INSERTION FOR CSV EXPORT ---
     with open("imposed.csv", "w") as f:
         f.write(",".join(domain.dimnames) + "\n")
         for p in imp_points:

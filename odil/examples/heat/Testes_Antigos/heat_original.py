@@ -11,12 +11,12 @@ from odil import printlog
 from odil.runtime import tf
 
 
-def get_init_u(t, x, y=None, mod=np):
+def get_init_u(t, x, mod):
     # Gaussian.
     def f(z):
         return mod.exp(-((z - 0.5) ** 2) * 50)
 
-    return f(x) - f(0)
+    return f(x) - f(-mod.cast(0.5, x.dtype))
 
 
 def get_ref_k(u, mod=np):
@@ -31,21 +31,14 @@ def get_anneal_factor(epoch, period):
 def transform_k(knet, mod, kmax):
     return mod.sigmoid(knet) * kmax
 
-def get_tri_bc(x, x_peak=0.5, width=0.5, amplitude=1.0, mod=np):
-
-    half_width = width / 2.0
-    norm_dist = mod.abs(x - x_peak) / half_width
-    value = amplitude * (1.0 - norm_dist)
-    
-    return mod.maximum(mod.cast(0.0, x.dtype), value)
 
 def operator_odil(ctx):
     extra = ctx.extra
     mod = ctx.mod
     args = extra.args
-    dt, dx, dy = ctx.step()
-    it, ix, iy = ctx.indices()
-    nt, nx, ny = ctx.size()
+    dt, dx = ctx.step()
+    it, ix = ctx.indices()
+    nt, nx = ctx.size()
     epoch = ctx.tracers["epoch"]
 
     def stencil_var(key, frozen=False):
@@ -53,124 +46,61 @@ def operator_odil(ctx):
             frozen = False
         return [
             [
-                ctx.field(key, 0, 0, 0, frozen=frozen),
-                ctx.field(key, 0, -1, 0, frozen=frozen),
-                ctx.field(key, 0, 1, 0, frozen=frozen),
-                ctx.field(key, 0, 0, -1, frozen=frozen),
-                ctx.field(key, 0, 0, 1, frozen=frozen),
+                ctx.field(key, 0, 0, frozen=frozen),
+                ctx.field(key, 0, -1, frozen=frozen),
+                ctx.field(key, 0, 1, frozen=frozen),
             ],
             [
-                ctx.field(key, -1, 0, 0, frozen=frozen),
-                ctx.field(key, -1, -1, 0, frozen=frozen),
-                ctx.field(key, -1, 1, 0, frozen=frozen),
-                ctx.field(key, -1, 0, -1, frozen=frozen),
-                ctx.field(key, -1, 0, 1, frozen=frozen),
+                ctx.field(key, -1, 0, frozen=frozen),
+                ctx.field(key, -1, -1, frozen=frozen),
+                ctx.field(key, -1, 1, frozen=frozen),
             ],
         ]
-
-    y = ctx.domain.points()[2] 
 
     def apply_bc_u(st):
         # Apply boundary conditions by extrapolation to halo cells.
         if args.keep_init:
             # Initial conditions, linear extrapolation.
             u0 = extra.init_u
-            q0 = [u0, mod.roll(u0, 1, axis=0), mod.roll(u0, -1, axis=0),
-                  mod.roll(u0, 1, axis=1), mod.roll(u0, -1, axis=1)]
+            q0 = [u0, mod.roll(u0, 1, axis=0), mod.roll(u0, -1, axis=0)]
             extrap = odil.core.extrap_linear
             q, qm = st
-            for i in range(5):
+            for i in range(3):
                 qm[i] = mod.where(it == 0, extrap(q[i], q0[i][None, :]), qm[i])
         # Zero Dirichlet conditions, quadratic extrapolation.
         extrap = odil.core.extrap_quadh
-
-        hat_BC = get_tri_bc(y,mod=mod)
         for q in st:
-            # If iy ==0, substitute hallo cell q[3] by q[0] for zero gradient 
             q[1] = mod.where(ix == 0, extrap(q[2], q[0], 0), q[1])
-            # Ghost point technique: for the BC value, one should average the interior point and hallo cell
-            # This implies that the hallo cell value for the pretended BC must be q[2] = 2*u_BC - q[0](interior)
-            #q[2] = mod.where(ix == nx - 1, 2*hat_BC - q[0], q[2])#triangular BC
-            q[2] = mod.where(ix == nx - 1, q[0], q[2]) 
-            q[3] = mod.where(iy == 0, q[0], q[3])
-            q[4] = mod.where(iy == ny - 1, q[0], q[4])
+            q[2] = mod.where(ix == nx - 1, extrap(q[1], q[0], 0), q[2])
         return st
 
     u_st = stencil_var("u")
     apply_bc_u(u_st)
 
     q, qm = u_st
-
-    u_cen, u_w, u_e, u_s, u_n = q
-    um_cen, um_w, um_e, um_s, um_n = qm
-
-    u_xm = ((u_cen + um_cen) - (u_w + um_w)) / (2 * dx)
-    u_xp = ((u_e + um_e) - (u_cen + um_cen)) / (2 * dx) 
-
-    u_ym = ((u_cen + um_cen) - (u_s + um_s)) / (2 * dy) 
-    u_yp = ((u_n + um_n) - (u_cen + um_cen)) / (2 * dy) 
-
-    u_t = (u_cen - um_cen) / dt
+    u_t = (q[0] - qm[0]) / dt
+    u_xm = ((q[0] + qm[0]) - (q[1] + qm[1])) / (2 * dx)
+    u_xp = ((q[2] + qm[2]) - (q[0] + qm[0])) / (2 * dx)
 
     uf_st = stencil_var("u", frozen=True)
     apply_bc_u(uf_st)
     qf, qfm = uf_st
-    uf_cen, uf_w, uf_e, uf_s, uf_n = qf
-    ufm_cen, ufm_w, ufm_e, ufm_s, ufm_n = qfm
-
-    ufxmh = ((uf_cen + ufm_cen) + (uf_w + ufm_w)) * 0.25 # West face
-    ufxph = ((uf_e + ufm_e) + (uf_cen + ufm_cen)) * 0.25 # East face
-
-    ufymh = ((uf_cen + ufm_cen) + (uf_s + ufm_s)) * 0.25 # South face
-    ufyph = ((uf_n + ufm_n) + (uf_cen + ufm_cen)) * 0.25 # North face
+    ufxmh = ((qf[0] + qfm[0]) + (qf[1] + qfm[1])) * 0.25
+    ufxph = ((qf[2] + qfm[2]) + (qf[0] + qfm[0])) * 0.25
 
     # Conductivity.
     if args.infer_k:
-        k_net = ctx.neural_net("k_net")
-        km_x = transform_k(k_net(ufxmh)[0], mod, args.kmax)
-        kp_x = transform_k(k_net(ufxph)[0], mod, args.kmax)
-        km_y = transform_k(k_net(ufymh)[0], mod, args.kmax) # ADDED
-        kp_y = transform_k(k_net(ufyph)[0], mod, args.kmax) # ADDED
+        km = transform_k(ctx.neural_net("k_net")(ufxmh)[0], mod, args.kmax)
+        kp = transform_k(ctx.neural_net("k_net")(ufxph)[0], mod, args.kmax)
     else:
-        km_x = get_ref_k(ufxmh, mod=mod)
-        kp_x = get_ref_k(ufxph, mod=mod)
-        km_y = get_ref_k(ufymh, mod=mod) # ADDED
-        kp_y = get_ref_k(ufyph, mod=mod) # ADDED
-
+        km = get_ref_k(ufxmh, mod=mod)
+        kp = get_ref_k(ufxph, mod=mod)
 
     # Heat equation.
-    # Fluxes in x-direction
-    qm_x = u_xm * km_x
-    qp_x = u_xp * kp_x
-    # ADDED: Fluxes in y-direction
-    qm_y = u_ym * km_y
-    qp_y = u_yp * kp_y
-    # Divergence of the flux    
-    q_div_x = (qp_x - qm_x) / dx
-    q_div_y = (qp_y - qm_y) / dy # ADDED
-
-    
-    dom = ctx.domain 
-    t = ctx.cast(it) * dt
-    x = dom.lower[1] + ctx.cast(ix) * dx
-
-    if args.infer_s:
-        points = ctx.points() 
-        S = ctx.neural_net("s_net")(*list(points))
-    else:
-        A  = args.src_strength
-        v  = args.src_speed
-        x0 = args.src_x0
-
-        xc = x - (x0 + v*t)
-        half_w = args.src_width * 0.5
-
-        S = A * ctx.cast(mod.abs(xc) <= half_w, dtype=u_t.dtype)
-
-    # MODIFIED: Final residual includes both divergence terms
-    #fu = u_t - (q_div_x + q_div_y) - S
-    fu = u_t - (q_div_x + q_div_y)
-    
+    qm = u_xm * km
+    qp = u_xp * kp
+    q_x = (qp - qm) / dx
+    fu = u_t - q_x
     if not args.keep_init:
         fu = mod.where(it == 0, ctx.cast(0), fu)
     res = [("fu", fu)]
@@ -178,38 +108,22 @@ def operator_odil(ctx):
     if extra.imp_size:
         u = u_st[0]
         # Rescale weight to the total number of points.
-        b = args.kimp * (np.prod(ctx.size()) / extra.imp_size) ** 0.5
-        # imp_mask is a tensor of 0s and 1s (1s in the location of the imposed points, and 0s in the location of non-existent imposed points)
-        fuimp = extra.imp_mask * (u_st[0][0] - extra.imp_u) * b
+        k = args.kimp * (np.prod(ctx.size()) / extra.imp_size) ** 0.5
+        fuimp = extra.imp_mask * (u_st[0][0] - extra.imp_u) * k
         res += [("imp", fuimp)]
-        #(k_pred,) = ctx.domain.neural_net(ctx.state,"k_net")(extra.ref_uk)
-        #k_pred = transform_k(k_pred, mod, args.kmax)
-        #fimp_k = (k_pred - extra.ref_k) * 100
-        #res += [("imp_k", fimp_k)]
 
     # Regularization.
     if args.kxreg:
-        k_ = args.kxreg * get_anneal_factor(epoch, args.kxregdecay)
+        k = args.kxreg * get_anneal_factor(epoch, args.kxregdecay)
         u_x = (u_st[0][0] - u_st[0][1]) / dx
         u_x = mod.where(ix == 0, ctx.cast(0), u_x)
-        k = mod.cast(k,u_x.dtype)
-        fxreg= u_x * k
+        fxreg = u_x * k
         res += [("xreg", fxreg)]
 
-    # ADDED: y-direction spatial regularization
-    if args.kyreg: 
-        k_ = args.kyreg * get_anneal_factor(epoch, args.kyregdecay)
-        u_y = (u_st[0][0] - u_st[0][3]) / dy 
-        u_y = mod.where(iy == 0, ctx.cast(0), u_y) # Use the 'iy' index
-        k = mod.cast(k_, u_y.dtype)
-        fyreg = u_y * k
-        res += [("yreg", fyreg)]
-
     if args.ktreg:
-        k_ = args.ktreg * get_anneal_factor(epoch, args.ktregdecay)
+        k = args.ktreg * get_anneal_factor(epoch, args.ktregdecay)
         u_t = (u_st[0][0] - u_st[1][0]) / dt
         u_t = mod.where(it == 0, ctx.cast(0), u_t)
-        k = mod.cast(k,u_t.dtype)
         ftreg = u_t * k
         res += [("treg", ftreg)]
 
@@ -217,8 +131,7 @@ def operator_odil(ctx):
         domain = ctx.domain
         ww = domain.arrays_from_field(ctx.state.fields["k_net"])
         ww = mod.concatenate([mod.flatten(w) for w in ww], axis=0)
-        k_ = args.kwreg * get_anneal_factor(epoch, args.kwregdecay)
-        k = mod.cast(k_,ww.dtype)
+        k = args.kwreg * get_anneal_factor(epoch, args.kwregdecay)
         res += [("wreg", (mod.stop_gradient(ww) - ww) * k)]
     return res
 
@@ -322,58 +235,48 @@ def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--Nt", type=int, default=64, help="Grid size in t")
     parser.add_argument("--Nx", type=int, default=64, help="Grid size in x")
-    parser.add_argument("--Ny", type=int, default=64, help="Grid size in y")
     parser.add_argument("--Nci", type=int, default=4096, help="Number of collocation points inside domain")
     parser.add_argument("--Ncb", type=int, default=128, help="Number of collocation points on each boundary")
     parser.add_argument(
         "--arch_u", type=int, nargs="*", default=[10, 10], help="Network architecture for temperature in PINN"
     )
     parser.add_argument(
-        "--arch_k", type=int, nargs="*", default=[10, 10, 10], help="Network architecture for inferred conductivity"
+        "--arch_k", type=int, nargs="*", default=[5, 5], help="Network architecture for inferred conductivity"
     )
     parser.add_argument("--solver", type=str, choices=("pinn", "odil"), default="odil", help="Grid size in x")
     parser.add_argument("--infer_k", type=int, default=1, help="Infer conductivity")
-    parser.add_argument("--infer_s", type=int, default=1, help="Infer the source term S(t,x,y)")
-    parser.add_argument(
-        "--arch_s", type=int, nargs="*", default=[10, 10, 10], help="Network architecture for inferred source")
     parser.add_argument("--kxreg", type=float, default=0, help="Space regularization weight")
     parser.add_argument("--kxregdecay", type=float, default=0, help="Decay period of kxreg")
-    parser.add_argument("--kyreg", type=float, default=0, help="Space regularization weight")
-    parser.add_argument("--kyregdecay", type=float, default=0, help="Decay period of kyreg")
     parser.add_argument("--ktreg", type=float, default=0, help="Time regularization weight")
     parser.add_argument("--ktregdecay", type=float, default=0, help="Decay period of ktreg")
     parser.add_argument("--kwreg", type=float, default=0, help="Regularization of neural network weights")
     parser.add_argument("--kwregdecay", type=float, default=0, help="Decay period of kwreg")
-    parser.add_argument("--kimp", type=float, default=1, help="Weight of imposed points")
+    parser.add_argument("--kimp", type=float, default=2, help="Weight of imposed points")
     parser.add_argument("--keep_frozen", type=int, default=1, help="Respect frozen attribute for fields")
     parser.add_argument("--keep_init", type=int, default=1, help="Impose initial conditions")
-    parser.add_argument("--ref_path", type=str, default="out_heat_direct_teste_3/data_00010.pickle", help="Path to reference solution *.pickle")
+    parser.add_argument("--ref_path", type=str,default="out_heat_original/data_00010.pickle", help="Path to reference solution *.pickle")
     parser.add_argument(
         "--imposed",
         type=str,
         choices=["random", "stripe", "none"],
-        default="random",
+        default="stripe",
         help="Set of points for imposed solution",
     )
-    parser.add_argument("--nimp", type=int, default=500, help="Number of points for imposed=random")
+    parser.add_argument("--nimp", type=int, default=200, help="Number of points for imposed=random")
     parser.add_argument("--noise", type=float, default=0, help="Magnitude of perturbation of reference solution")
     parser.add_argument("--kmax", type=float, default=0.1, help="Maximum value of conductivity")
-    parser.add_argument("--src_strength", type=float, default=5.0, help="Strength (A) of the moving source")
-    parser.add_argument("--src_speed", type=float, default=0.4, help="Horizontal speed (v) of the moving source")
-    parser.add_argument("--src_x0", type=float, default=0.6, help="Initial x-position (x0) of the source center at t=0")
-    parser.add_argument("--src_y0", type=float, default=0.5, help="Initial y-position (y0) of the source (unused)")
-    parser.add_argument("--src_width", type=float, default=0.05, help="Width of the moving source bar")
     odil.util.add_arguments(parser)
     odil.linsolver.add_arguments(parser)
-    parser.set_defaults(outdir="out_heat_inverse_2D_64_testingS_inFU")
+    parser.set_defaults(outdir="out_inverse_original")
     parser.set_defaults(linsolver="direct")
     parser.set_defaults(optimizer="adam")
     parser.set_defaults(lr=0.001)
     parser.set_defaults(double=0)
     parser.set_defaults(multigrid=1)
     parser.set_defaults(plotext="png", plot_title=1)
-    parser.set_defaults(plot_every=500, report_every=500, history_full=10, history_every=100, frames=20)
+    parser.set_defaults(plot_every=2000, report_every=500, history_full=10, history_every=100, frames=10)
     return parser.parse_args()
+
 
 @tf.function()
 def eval_u_net(domain, net, arrays):
@@ -382,116 +285,67 @@ def eval_u_net(domain, net, arrays):
     (net_u,) = odil.core.eval_neural_net(net, [tt, xx], domain.mod)
     return net_u
 
+
 def plot_func(problem, state, epoch, frame, cbinfo=None):
-    # Import 2D plotting tools if needed, but we'll use matplotlib directly
-    import matplotlib.pyplot as plt
-    
+    from odil.plot import plot_1d
+
     domain = problem.domain
     extra = problem.extra
     mod = domain.mod
     args = extra.args
 
-    # --- Setup paths and titles ---
-    title0 = f"Epochs={epoch}" if args.plot_title else None
-    title1 = f"Epochs={epoch}" if args.plot_title else None
-    path0 = f"u_{frame:05d}.{args.plotext}"
-    path1 = f"k_{frame:05d}.{args.plotext}"
-    printlog(f"Saving plots: {path0}, {path1}")
+    title0 = "u epoch={:}".format(epoch) if args.plot_title else None
+    title1 = "k epoch={:}".format(epoch) if args.plot_title else None
+    path0 = "u_{:05d}.{}".format(frame, args.plotext)
+    path1 = "k_{:05d}.{}".format(frame, args.plotext)
+    printlog(path0, path1)
 
-    # --- Get the solution field 'u' ---
     if args.solver == "odil":
         state_u = domain.field(state, "u")
     elif args.solver == "pinn":
-        # Note: Ensure eval_u_net is updated for 3 inputs (t, x, y)
         net = state.fields["u_net"]
         arrays = domain.arrays_from_field(net)
         state_u = eval_u_net(domain, net, arrays)
-    state_u = np.array(state_u) # Shape is (Nt, Nx, Ny)
+    state_u = np.array(state_u)
 
-    # --- Plot 1: Heat distribution u(t, x, y) at different time slices ---
-    
-    # Define how many time slices to display
-    nslices = 5
-    # Create a figure with a row of subplots
-    fig, axes = plt.subplots(1, nslices, figsize=(nslices * 3, 3.5), sharey=True)
-    fig.suptitle(title0)
-
-    # Get the physical boundaries of the spatial domain
-    t_coords, x_coords, y_coords = domain.points_1d()
-    extent = [x_coords.min(), x_coords.max(), y_coords.min(), y_coords.max()]
-    
-    # Select evenly spaced time indices to plot
-    time_indices = np.linspace(0, state_u.shape[0] - 1, nslices, dtype=int)
-    
-    # Determine the time window for showing imposed points on each slice
-    dt = domain.step()[0]
-    time_window = dt * (len(t_coords) / nslices) / 2
-
-    # Find global min/max for a consistent color scale
-    umin = 0
-    umax = 1
-
-    for i, t_idx in enumerate(time_indices):
-        ax = axes[i]
-        t_val = t_coords[t_idx]
-        
-        # Extract the 2D spatial slice at this time
-        u_slice = state_u[t_idx, :, :]
-        
-        # Plot the heatmap of the solution
-        im = ax.imshow(u_slice.T, origin='lower', extent=extent, cmap="YlOrBr", 
-                       vmin=umin, vmax=umax, interpolation='bilinear')
-        
-        ax.set_title(f't = {t_val:.2f}')
-        ax.set_xlabel('x')
+    def callback(i, fig, ax, data, extent):
         if i == 0:
-            ax.set_ylabel('y')
-            
-        # Overlay the imposed data points that are close to this time slice
-        if extra.imp_size > 0:
-            imp_t = extra.imp_points[:, 0]
-            # Select points within the time window
-            points_in_slice = extra.imp_points[np.abs(imp_t - t_val) <= time_window]
-            if len(points_in_slice) > 0:
-                # Plot x (col 1) vs y (col 2)
-                ax.scatter(points_in_slice[:, 1], points_in_slice[:, 2], 
-                           s=1.5, alpha=0.8, edgecolor="none", facecolor="black", zorder=100)
+            imp_t, imp_x = extra.imp_points.T
+            ax.scatter(imp_x, imp_t, s=0.5, alpha=1, edgecolor="none", facecolor="k", zorder=100)
 
-    # Add a single colorbar for the entire figure
-    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.8, label='u')
-    fig.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust for suptitle
-    fig.savefig(path0, bbox_inches="tight")
-    plt.close(fig)
+    plot_1d(
+        domain,
+        np.array(extra.imp_u),
+        state_u,
+        path=path0,
+        title=title0,
+        cmap="YlOrBr",
+        nslices=5,
+        interpolation="bilinear",
+        callback=callback,
+        transpose=True,
+        umin=0,
+        umax=1,
+    )
 
-
-    # --- Plot 2: Conductivity k(u) ---
-    # This part is dimension-agnostic and requires no changes.
+    # Plot conductivity.
     fig, ax = plt.subplots(figsize=(1.7, 1.5))
     ref_uk = extra.ref_uk
     ref_k = get_ref_k(ref_uk)
     if args.infer_k:
         (k,) = domain.neural_net(state, "k_net")(ref_uk)
         k = transform_k(k, mod, args.kmax)
-        print(f"DEBUG: Inferred k values (min/max): {np.min(k):.4f} / {np.max(k):.4f}")
     else:
         k = None
     if k is not None:
-        ax.plot(ref_uk, k, zorder=10, label='Inferred')
-    ax.plot(ref_uk, ref_k, c="C2", lw=1.5, zorder=1, label='Reference')
+        ax.plot(ref_uk, k, zorder=10)
+    ax.plot(ref_uk, ref_k, c="C2", lw=1.5, zorder=1)
     ax.set_xlabel("u")
     ax.set_ylabel("k")
     ax.set_ylim(0, 0.03)
     ax.set_title(title1)
-    # Optional: add a legend if both are plotted
-    # ax.legend() 
     fig.savefig(path1, bbox_inches="tight")
     plt.close(fig)
-    
-    # The rest of the function for saving data/checkpoints can remain the same
-    if frame == args.frames:
-        state_to_save = odil.State(fields={"u": odil.Field(array=state_u)})
-        state_to_save = domain.init_state(state_to_save)
-        odil.core.checkpoint_save(domain, state_to_save, "ref_solution.pickle")
 
     if args.dump_data:
         path = "data_{:05d}.pickle".format(frame)
@@ -551,125 +405,58 @@ def report_func(problem, state, epoch, cbinfo):
 
 def load_fields_interp(path, keys, domain):
     """
-    Loads fields from file `path` and interpolates them to the 3D shape of `domain`.
-    Works for (t, x, y) domains.
+    Loads fields from file `path` and interpolates them to shape `domain.shape`.
 
     keys: `list` of `str`
         Keys of fields to load.
     """
-    # MODIFIED: Import the N-dimensional regular grid interpolator
-    from scipy.interpolate import RegularGridInterpolator
+    from scipy.interpolate import RectBivariateSpline
 
     src_state = odil.State(fields={key: odil.Field() for key in keys})
     state = odil.State(fields={key: odil.Field() for key in keys})
-    odil.core.checkpoint_load(domain, src_state, path)
-
-    # Get the 1D coordinate arrays for the TARGET domain
-    target_coords = domain.points_1d()
-
+    #odil.core.checkpoint_load(domain, src_state, path)
+    with open(path, 'rb') as f:
+        data = pickle.load(f)
+    src_state.fields['u'].array = data['state_u']
+    x1, y1 = domain.points_1d()
     for key in keys:
         src_u = src_state.fields[key]
-        
-        # Check if the source data has a valid shape
-        if len(src_u.array.shape) != domain.ndim:
-            raise ValueError(
-                f"Dimension mismatch: Source field '{key}' has {len(src_u.array.shape)} dims, "
-                f"but target domain has {domain.ndim} dims."
-            )
-            
-        # Create a temporary domain object representing the SOURCE data's grid
         src_domain = odil.Domain(
             cshape=src_u.array.shape,
-            dimnames=domain.dimnames, # Use same dimension names
+            dimnames=("x", "y"),
             lower=domain.lower,
             upper=domain.upper,
             dtype=domain.dtype,
             mod=odil.backend.ModNumpy(),
         )
         src_u = src_domain.init_field(src_u)
-
         if src_domain.cshape != domain.cshape:
-            printlog(f"Interpolating field '{key}' from {src_domain.cshape} to {domain.cshape}")
-            
-            # Get the 1D coordinate arrays from the SOURCE domain
-            src_coords = src_domain.points_1d()
-
-            # Create the 3D interpolator object
-            # It takes a tuple of coordinate arrays and the data array
-            interpolator = RegularGridInterpolator(
-                points=src_coords, 
-                values=src_u.array, 
-                method='linear', 
-                bounds_error=False, 
-                fill_value=0
-            )
-
-            # Create a meshgrid of points where we want to evaluate the interpolator
-            # 'indexing='ij'' is crucial to match the (t, x, y) array ordering
-            target_mesh = np.meshgrid(*target_coords, indexing='ij')
-            
-            # Stack the meshgrid arrays into a list of (t, x, y) points
-            target_points = np.stack([grid.ravel() for grid in target_mesh], axis=-1)
-
-            # Evaluate the interpolator on the new grid points
-            interp_values = interpolator(target_points)
-            
-            # Reshape the flattened result back to the target domain's shape
-            state.fields[key].array = interp_values.reshape(domain.cshape)
+            src_x1, src_y1 = src_domain.points_1d()
+            fu = RectBivariateSpline(src_x1, src_y1, src_u.array)
+            state.fields[key].array = fu(x1, y1)
         else:
-            # If shapes match, no interpolation is needed
             state.fields[key] = src_u
-            
     return state
 
 
 def make_problem(args):
     dtype = np.float64 if args.double else np.float32
-    domain = odil.Domain(cshape=(args.Nt, args.Nx, args.Ny), dimnames=("t", "x", "y"), multigrid=args.multigrid, dtype=dtype)
+    domain = odil.Domain(cshape=(args.Nt, args.Nx), dimnames=("t", "x"), multigrid=args.multigrid, dtype=dtype)
     if domain.multigrid:
         printlog("multigrid levels:", domain.mg_cshapes)
     mod = domain.mod
     # Evaluate exact solution, boundary and initial conditions.
-    tt, xx, yy = domain.points()
-    init_u = get_init_u(tt, xx, yy, mod)
+    tt, xx = domain.points()
+    t1, x1 = domain.points_1d()
+    init_u = get_init_u(x1 * 0, x1, mod)
 
-    # --- (New Corrected Block) ---
     # Load reference solution.
     if args.ref_path is not None:
         printlog("Loading reference solution from '{}'".format(args.ref_path))
-        with open(args.ref_path, 'rb') as f:
-            ref_data = pickle.load(f)
-        
-        if 'state_u' not in ref_data:
-            raise KeyError(f"Reference file {args.ref_path} does not contain the key 'state_u'")
-
-        src_array = ref_data['state_u']
-
-        if src_array.shape != domain.cshape:
-            printlog(f"Interpolating reference field from {src_array.shape} to {domain.cshape}")
-            from scipy.interpolate import RegularGridInterpolator
-            
-            # Create temporary source domain to get its coordinates
-            src_domain = odil.Domain(cshape=src_array.shape, dimnames=domain.dimnames,
-                                    lower=domain.lower, upper=domain.upper)
-            
-            src_coords = src_domain.points_1d()
-            target_coords = domain.points_1d()
-
-            interpolator = RegularGridInterpolator(points=src_coords, values=src_array, method='linear',
-                                                bounds_error=False, fill_value=0)
-            
-            target_mesh = np.meshgrid(*target_coords, indexing='ij')
-            target_points = np.stack([grid.ravel() for grid in target_mesh], axis=-1)
-            interp_values = interpolator(target_points)
-            ref_u = interp_values.reshape(domain.cshape)
-        else:
-            # Shapes match, no interpolation needed
-            ref_u = src_array
+        ref_state = load_fields_interp(args.ref_path, ["u"], domain)
+        ref_u = domain.cast(ref_state.fields["u"].array)
     else:
-            ref_u = get_init_u(tt, xx, yy, mod)
-
-    ref_u = domain.cast(ref_u) # Ensure correct data type
+        ref_u = get_init_u(tt, xx, mod)
 
     # Add noise after choosing points with imposed values.
     imp_u = ref_u
@@ -682,7 +469,7 @@ def make_problem(args):
     with open("imposed.csv", "w") as f:
         f.write(",".join(domain.dimnames) + "\n")
         for p in imp_points:
-            f.write("{:},{:},{:}".format(*p) + "\n")
+            f.write("{:},{:}".format(*p) + "\n")
 
     ref_uk = np.linspace(0, 1, 200).astype(domain.dtype)
     ref_k = get_ref_k(ref_uk)
@@ -735,8 +522,6 @@ def make_problem(args):
 
     if args.infer_k:
         state.fields["k_net"] = domain.make_neural_net([1] + args.arch_k + [1])
-    if args.infer_s:
-        state.fields["s_net"] = domain.make_neural_net([domain.ndim] + args.arch_s + [1])
 
     state = domain.init_state(state)
 
@@ -770,6 +555,7 @@ def main():
 
     with open("done", "w") as f:
         pass
-    
+
+
 if __name__ == "__main__":
     main()

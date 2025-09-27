@@ -34,7 +34,7 @@ class EarlyStopError(Exception):
 class LbfgsbOptimizer(Optimizer):
 
     def __init__(self,
-                 pgtol=1e-16,
+                 pgtol=0,
                  m=50,
                  maxls=50,
                  factr=0,

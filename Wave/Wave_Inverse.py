@@ -47,7 +47,7 @@ data = dde.data.TimePDE(
     [bc, ic,ic_2, observe_y],
     num_domain=4096,
     num_boundary=400,
-    num_initial=400,
+    num_initial=100,
     solution=U_exact,
     num_test=4096,
 )
