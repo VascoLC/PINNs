@@ -4,6 +4,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import time
 from scipy.interpolate import RegularGridInterpolator
+import os
+
+def get_ref_k(u, mod=np):
+    # Gaussian.
+    return 0.02 * (mod.exp(-((u - 0.5) ** 2) * 20))
 
 # Neural Nets
 class NetU(tf.keras.Model):
@@ -35,12 +40,11 @@ class NetK(tf.keras.Model):
 # ------------------------------
 # Load measurement data at t
 # ------------------------------
-df_1 = pd.read_csv("Train_data_1D.csv")
-df = df_1.sample(n=500, random_state=42)
+df = pd.read_csv("C:\PINNs_Git\PINNs\odil\examples\heat\out_heat_inverse_1D_Imposed_solution/imposed_data_with_u.csv")
 
 XT_obs_np = df[["x","t"]].values.astype(np.float32)   # (N, 2)
 u_obs_np   = df[["u"]].values.reshape(-1, 1).astype(np.float32)  # (N, 1)
-k_obs_np   = df[["k"]].values.reshape(-1, 1).astype(np.float32)  # (N, 1)
+k_obs_np   = get_ref_k(u_obs_np)
 
 XT_obs = tf.convert_to_tensor(XT_obs_np)
 u_obs   = tf.convert_to_tensor(u_obs_np)
@@ -173,6 +177,50 @@ def compute_loss(xt_domain, xt_bc, u_bc, xt_ic, u_ic, xt_obs, u_obs, k_obs):
     total_loss = loss_pde + loss_ic + loss_bc + loss_u 
 
     return total_loss, loss_u, loss_k
+# ------------------------------
+# Plot
+# ------------------------------
+def plot_and_save(net_u, net_k, epoch, folder_name):
+    """
+    Generates and saves plots for the temperature field u(x,t) and conductivity k(u).
+    """
+    # 1. Plot the temperature field u(x,t)
+    Nx, Nt = 200, 200 # Lower resolution for faster plotting during training
+    x = np.linspace(0, 1, Nx)
+    t = np.linspace(0, 1, Nt)
+    X, T = np.meshgrid(x, t)
+    XT_grid = np.hstack([X.flatten()[:, None], T.flatten()[:, None]]).astype(np.float32)
+    u_pred = net_u(tf.convert_to_tensor(XT_grid), training=False).numpy().reshape(Nt, Nx)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Plot for u(x,t)
+    cf = ax1.contourf(X, T, u_pred, levels=100, cmap='viridis')
+    fig.colorbar(cf, ax=ax1, label="u(x,t)")
+    ax1.set_xlabel("x")
+    ax1.set_ylabel("t")
+    ax1.set_title(f"Temperature Field u(x,t) at Epoch {epoch}")
+
+    # 2. Plot the learned conductivity k(u) vs the true one
+    u_range = np.linspace(0, 1, 400).reshape(-1, 1).astype(np.float32)
+    k_true = get_ref_k(u_range)
+    k_learned = net_k(tf.convert_to_tensor(u_range), training=False).numpy()
+    
+    ax2.plot(u_range, k_true, 'r--', linewidth=2, label="True k(u)")
+    ax2.plot(u_range, k_learned, 'b-', linewidth=2, label="Learned k(u)")
+    ax2.set_xlabel("u")
+    ax2.set_ylabel("k(u)")
+    ax2.set_title(f"Conductivity k(u) at Epoch {epoch}")
+    ax2.legend()
+    ax2.grid(True)
+
+    # Save the combined figure
+    plt.tight_layout()
+    # Use zfill to pad epoch number with zeros for correct file sorting
+    filename = os.path.join(folder_name, f"results_epoch_{str(epoch).zfill(6)}.png")
+    plt.savefig(filename)
+    plt.close(fig) # Close the figure to free up memory
+    print(f"--- Saved plots to {filename} ---")
 
 # ------------------------------
 # Optimize
@@ -183,7 +231,17 @@ epochs = 200_000
 
 loss_history = [] 
 
+# NEW: Create the results directory if it doesn't exist
+results_folder = 'Results Optimisation'
+if not os.path.exists(results_folder):
+    os.makedirs(results_folder)
+
 start_time = time.perf_counter()
+
+# NEW: Plot initial state before training
+print("Plotting initial random state (Epoch 0)...")
+plot_and_save(net_u, net_k, 0, results_folder)
+
 for epoch in range(1, epochs+1):
 
     with tf.GradientTape() as tape:
@@ -199,6 +257,9 @@ for epoch in range(1, epochs+1):
 
     if epoch % 100 == 0:
         print(f"Epoch {epoch:04d} — Total Loss: {total_loss.numpy():.4e} | Loss_u: {loss_u.numpy():.4e} | Loss_k: {loss_k:.4e}")
+    # NEW: Call the plotting function every 500 epochs
+    if epoch % 500 == 0:
+        plot_and_save(net_u, net_k, epoch, results_folder)
         
 
 

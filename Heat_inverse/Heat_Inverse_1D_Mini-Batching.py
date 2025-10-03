@@ -3,6 +3,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import time
+import os
+
+def get_ref_k(u, mod=np):
+    # Gaussian.
+    return 0.02 * (mod.exp(-((u - 0.5) ** 2) * 20))
 
 # ------------------------------
 # Neural Nets
@@ -38,12 +43,11 @@ class NetK(tf.keras.Model):
 # Load measurement data at t
 # ------------------------------
 
-df_1 = pd.read_csv("Train_data_1D.csv")
-df = df_1.sample(n=500,random_state=42)
+df = pd.read_csv("C:\PINNs_Git\PINNs\odil\examples\heat\out_heat_inverse_1D_Imposed_solution/imposed_data_with_u.csv")
 
 XT_obs_np = df[["x","t"]].values.astype(np.float32)   
 u_obs_np   = df[["u"]].values.reshape(-1, 1).astype(np.float32)  
-k_obs_np   = df[["k"]].values.reshape(-1, 1).astype(np.float32) 
+k_obs_np   = get_ref_k(u_obs_np)
 
 XT_obs = tf.convert_to_tensor(XT_obs_np)
 u_obs   = tf.convert_to_tensor(u_obs_np)
@@ -52,12 +56,14 @@ k_obs   = tf.convert_to_tensor(k_obs_np)
 # Initial condition
 
 n_ic = 400
+x_ic = np.random.rand(n_ic,1)
+t_ic = np.zeros((n_ic,1), dtype=np.float32)
+xt_ic_np = np.hstack([x_ic,t_ic]).astype(np.float32)
 
-xt_ic_np = df_1[["x","t"]].values.astype(np.float32)[0:n_ic,:]
-u_ic_np = df_1[["u"]].values.astype(np.float32)[0:n_ic,:]
+u_ic_np = (np.exp(-50*(x_ic-0.5)**2)-np.exp(-50*0.5**2)).astype(np.float32)
 
 xt_ic = tf.convert_to_tensor(xt_ic_np)
-u_ic = tf.convert_to_tensor(u_ic_np)
+u_ic   = tf.convert_to_tensor(u_ic_np)
 
 # Boundary condition
 
@@ -135,7 +141,7 @@ def compute_loss(xt_domain, xt_bc, u_bc, xt_ic, u_ic, xt_obs, u_obs, k_obs):
     loss_k  = tf.reduce_mean(tf.square(k_pred_obs - k_obs))
 
     
-    total_loss = loss_pde + loss_ic + loss_bc + loss_u + loss_k
+    total_loss = loss_pde + loss_ic + loss_bc + loss_u
 
     return total_loss, loss_u, loss_k, loss_ic, loss_bc, loss_pde
 
@@ -148,12 +154,66 @@ num_obs = XT_obs_np.shape[0]
 num_batches = int(np.ceil(num_obs / batch_size_obs))
 
 # ------------------------------
+# Plot
+# ------------------------------
+def plot_and_save(net_u, net_k, epoch, folder_name):
+    """
+    Generates and saves plots for the temperature field u(x,t) and conductivity k(u).
+    """
+    # 1. Plot the temperature field u(x,t)
+    Nx, Nt = 200, 200 # Lower resolution for faster plotting during training
+    x = np.linspace(0, 1, Nx)
+    t = np.linspace(0, 1, Nt)
+    X, T = np.meshgrid(x, t)
+    XT_grid = np.hstack([X.flatten()[:, None], T.flatten()[:, None]]).astype(np.float32)
+    u_pred = net_u(tf.convert_to_tensor(XT_grid), training=False).numpy().reshape(Nt, Nx)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Plot for u(x,t)
+    cf = ax1.contourf(X, T, u_pred, levels=100, cmap='viridis')
+    fig.colorbar(cf, ax=ax1, label="u(x,t)")
+    ax1.set_xlabel("x")
+    ax1.set_ylabel("t")
+    ax1.set_title(f"Temperature Field u(x,t) at Epoch {epoch}")
+
+    # 2. Plot the learned conductivity k(u) vs the true one
+    u_range = np.linspace(0, 1, 400).reshape(-1, 1).astype(np.float32)
+    k_true = get_ref_k(u_range)
+    k_learned = net_k(tf.convert_to_tensor(u_range), training=False).numpy()
+    
+    ax2.plot(u_range, k_true, 'r--', linewidth=2, label="True k(u)")
+    ax2.plot(u_range, k_learned, 'b-', linewidth=2, label="Learned k(u)")
+    ax2.set_xlabel("u")
+    ax2.set_ylabel("k(u)")
+    ax2.set_title(f"Conductivity k(u) at Epoch {epoch}")
+    ax2.legend()
+    ax2.grid(True)
+
+    # Save the combined figure
+    plt.tight_layout()
+    # Use zfill to pad epoch number with zeros for correct file sorting
+    filename = os.path.join(folder_name, f"results_epoch_{str(epoch).zfill(6)}.png")
+    plt.savefig(filename)
+    plt.close(fig) # Close the figure to free up memory
+    print(f"--- Saved plots to {filename} ---")
+
+# ------------------------------
 # Optimize
 # ------------------------------
+# NEW: Create the results directory if it doesn't exist
+results_folder = 'Results Optimisation'
+if not os.path.exists(results_folder):
+    os.makedirs(results_folder)
+
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
 epochs = 40_000
 loss_history = [] 
+
+# NEW: Plot initial state before training
+print("Plotting initial random state (Epoch 0)...")
+plot_and_save(net_u, net_k, 0, results_folder)
 
 start_time = time.perf_counter()
 for epoch in range(1, epochs+1):
@@ -180,11 +240,9 @@ for epoch in range(1, epochs+1):
 
     if epoch % 100 == 0:
         print(f"Epoch {epoch:04d} — Total Loss: {total_loss.numpy():.4e} | Loss_u: {loss_u.numpy():.4e} | Loss_k: {loss_k:.4e} | Loss_ic: {loss_ic:.4e} | Loss_bc: {loss_bc:.4e} | Loss_pde: {loss_pde:.4e}")
-    '''
-    if total_loss < 1e-3:
-        print(f"Optimisation ended due to the total loss value: {total_loss}; Number of epochs: {epoch}")
-        break
-    '''
+
+    if epoch % 2500 == 0:
+        plot_and_save(net_u, net_k, epoch, results_folder)
 
 end_time = time.perf_counter()
 elapsed = end_time - start_time
@@ -214,10 +272,10 @@ df_final = pd.DataFrame({
     "k": k_pred.flatten(),
 })
 
-df_final.to_csv("Heat_Inverse_1D_solution.csv", index=False)
+df_final.to_csv("Heat_Inverse_1D_solution_Batching_NoK.csv", index=False)
 
 df_loss = pd.DataFrame(loss_history, columns=["epoch", "total_loss", "loss_u", "loss_k","loss_ic","loss_bc","loss_pde"])
-df_loss.to_csv("training_loss_log_1D_solution.csv", index=False)
+df_loss.to_csv("training_loss_log_1D_solution_Batching_NoK.csv", index=False)
 
 plt.figure(figsize=(7, 15))
 cf = plt.contourf(Xg, Tg, u_pred, levels=100, cmap="viridis")

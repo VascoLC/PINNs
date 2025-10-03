@@ -7,24 +7,14 @@ from tensorflow import keras
 
 plot_configs = [
     {
-        'path': 'out_heat_inverse_1D_adam_MODIL/train.csv',
+        'path': 'C:\PINNs_Git\PINNs\Heat_inverse\Heat_Inverse_1D_FBatch_Nk/training_loss_log_1D_solution_NoBatching_NoK.csv',
         'color': 'red',
-        'label': 'mODIL: ADAM'
+        'label': 'PINN: Full Data Set'
     },
     {
-        'path': 'out_heat_inverse_1D_adam_ODIL/train.csv',
+        'path': 'C:\PINNs_Git\PINNs\Heat_inverse\Heat_inverse_1D_5Batch_Nk/training_loss_log_1D_solution_Batching_NoK.csv',
         'color': 'green',
-        'label': 'ODIL: ADAM'
-    },
-    {
-        'path': 'out_heat_inverse_1D_lbfgsb_MODIL/train.csv',
-        'color': 'blue',
-        'label': 'mODIL: L-BFGS-B'
-    },
-    {
-        'path': 'out_heat_inverse_1D_lbfgs_ODIL/train.csv',
-        'color': 'orange',
-        'label': 'ODIL: L-BFGS-B'
+        'label': 'PINN: 5 Data Batches'
     }
 ]
 
@@ -35,21 +25,25 @@ ax = plt.gca()
 for config in plot_configs:
 
     df = pd.read_csv(config['path'])
+
+    # Filter the DataFrame to get every 10th epoch
+    df_filtered = df[(df['epoch'] <= 100) | (df['epoch'] % 500 == 0)]
+
+    # Extract epochs and loss_k from the filtered DataFrame
+    epochs = df_filtered["epoch"].values.astype(np.float32)
+    loss_k = df_filtered["loss_k"].values.astype(np.float32)
     
-    loss_k = df["error_u"].values.astype(np.float32)
-    epochs = df["epoch"].values.astype(np.float32)
-    
-    plt.plot(epochs, loss_k, linewidth=2, color=config['color'], label=config['label'])
+    plt.plot(epochs, np.sqrt(loss_k)/0.02, linewidth=2, color=config['color'], label=config['label'])
 
 plt.legend()
 plt.xlabel("epoch")
-plt.ylabel("Temperature Loss")
+plt.ylabel("Conductivity Loss")
 plt.xscale('log')
 plt.yscale('log')
 plt.tight_layout()
-plt.xlim([0, 10e4])
+plt.xlim([0, 1e6])
+plt.ylim([10e-4, 10e-0])
 plt.grid()
-
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 

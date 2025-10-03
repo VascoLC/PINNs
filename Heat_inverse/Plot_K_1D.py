@@ -9,8 +9,7 @@ def k_np(u):
 u_test = np.linspace(0, 1, 500) 
 k_analytic = k_np(u_test)
 
-#df = pd.read_csv("Train_data_1D.csv")
-df = pd.read_csv("Heat_Inverse_1D_solution.csv")
+df = pd.read_csv("C:\PINNs_Git\PINNs\odil\examples\heat\out_heat_inverse_1D_adam_MODIL")
 u_field =  df[["u"]].values.astype(np.float32)
 k_field = df[["k"]].values.astype(np.float32)
 

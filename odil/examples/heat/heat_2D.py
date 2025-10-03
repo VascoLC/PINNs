@@ -355,7 +355,7 @@ def parse_args():
         default="random",
         help="Set of points for imposed solution",
     )
-    parser.add_argument("--nimp", type=int, default=250, help="Number of points for imposed=random")
+    parser.add_argument("--nimp", type=int, default=500, help="Number of points for imposed=random")
     parser.add_argument("--noise", type=float, default=0, help="Magnitude of perturbation of reference solution")
     parser.add_argument("--kmax", type=float, default=0.1, help="Maximum value of conductivity")
     parser.add_argument("--src_strength", type=float, default=5.0, help="Strength (A) of the moving source")
@@ -370,7 +370,7 @@ def parse_args():
     parser.set_defaults(optimizer="adam")
     parser.set_defaults(lr=0.001)
     parser.set_defaults(double=0)
-    parser.set_defaults(multigrid=1)
+    parser.set_defaults(multigrid=0)
     parser.set_defaults(plotext="png", plot_title=1)
     parser.set_defaults(plot_every=3000, report_every=500, history_full=10, history_every=100, frames=10)
     return parser.parse_args()

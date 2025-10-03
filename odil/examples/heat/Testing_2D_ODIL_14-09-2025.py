@@ -15,8 +15,8 @@ def get_init_u(t, x, y=None, mod=np):
     # Gaussian.
     def f(z):
         return mod.exp(-((z - 0.5) ** 2) * 50)
-
-    return f(x) - f(0)
+    zero_val = mod.cast(0.0, x.dtype)
+    return f(x) - f(zero_val)
 
 
 def get_ref_k(u, mod=np):
@@ -200,7 +200,7 @@ def operator_odil(ctx):
     if args.kyreg: 
         k_ = args.kyreg * get_anneal_factor(epoch, args.kyregdecay)
         u_y = (u_st[0][0] - u_st[0][3]) / dy 
-        u_y = mod.where(iy == 0, ctx.cast(0), u_y) # Use the 'iy' index
+        u_y = mod.where(iy == 0, ctx.cast(0), u_y) 
         k = mod.cast(k_, u_y.dtype)
         fyreg = u_y * k
         res += [("yreg", fyreg)]
@@ -320,20 +320,20 @@ def get_imposed_mask(args, domain):
 
 def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--Nt", type=int, default=64, help="Grid size in t")
-    parser.add_argument("--Nx", type=int, default=64, help="Grid size in x")
-    parser.add_argument("--Ny", type=int, default=64, help="Grid size in y")
+    parser.add_argument("--Nt", type=int, default=32, help="Grid size in t")
+    parser.add_argument("--Nx", type=int, default=32, help="Grid size in x")
+    parser.add_argument("--Ny", type=int, default=32, help="Grid size in y")
     parser.add_argument("--Nci", type=int, default=4096, help="Number of collocation points inside domain")
     parser.add_argument("--Ncb", type=int, default=128, help="Number of collocation points on each boundary")
     parser.add_argument(
         "--arch_u", type=int, nargs="*", default=[10, 10], help="Network architecture for temperature in PINN"
     )
     parser.add_argument(
-        "--arch_k", type=int, nargs="*", default=[10, 10, 10], help="Network architecture for inferred conductivity"
+        "--arch_k", type=int, nargs="*", default=[5, 5], help="Network architecture for inferred conductivity"
     )
-    parser.add_argument("--solver", type=str, choices=("pinn", "odil"), default="odil", help="Grid size in x")
+    parser.add_argument("--solver", type=str, choices=("pinn", "odil"), default="odil", help="Framework")
     parser.add_argument("--infer_k", type=int, default=1, help="Infer conductivity")
-    parser.add_argument("--infer_s", type=int, default=1, help="Infer the source term S(t,x,y)")
+    parser.add_argument("--infer_s", type=int, default=0, help="Infer the source term S(t,x,y)")
     parser.add_argument(
         "--arch_s", type=int, nargs="*", default=[10, 10, 10], help="Network architecture for inferred source")
     parser.add_argument("--kxreg", type=float, default=0, help="Space regularization weight")
@@ -344,10 +344,10 @@ def parse_args():
     parser.add_argument("--ktregdecay", type=float, default=0, help="Decay period of ktreg")
     parser.add_argument("--kwreg", type=float, default=0, help="Regularization of neural network weights")
     parser.add_argument("--kwregdecay", type=float, default=0, help="Decay period of kwreg")
-    parser.add_argument("--kimp", type=float, default=1, help="Weight of imposed points")
+    parser.add_argument("--kimp", type=float, default=2, help="Weight of imposed points")
     parser.add_argument("--keep_frozen", type=int, default=1, help="Respect frozen attribute for fields")
     parser.add_argument("--keep_init", type=int, default=1, help="Impose initial conditions")
-    parser.add_argument("--ref_path", type=str, default="out_heat_direct_teste_3/data_00010.pickle", help="Path to reference solution *.pickle")
+    parser.add_argument("--ref_path", type=str, default="out_heat_direct_2D_128/data_00010.pickle", help="Path to reference solution *.pickle")
     parser.add_argument(
         "--imposed",
         type=str,
@@ -355,7 +355,7 @@ def parse_args():
         default="random",
         help="Set of points for imposed solution",
     )
-    parser.add_argument("--nimp", type=int, default=500, help="Number of points for imposed=random")
+    parser.add_argument("--nimp", type=int, default=250, help="Number of points for imposed=random")
     parser.add_argument("--noise", type=float, default=0, help="Magnitude of perturbation of reference solution")
     parser.add_argument("--kmax", type=float, default=0.1, help="Maximum value of conductivity")
     parser.add_argument("--src_strength", type=float, default=5.0, help="Strength (A) of the moving source")
@@ -365,14 +365,14 @@ def parse_args():
     parser.add_argument("--src_width", type=float, default=0.05, help="Width of the moving source bar")
     odil.util.add_arguments(parser)
     odil.linsolver.add_arguments(parser)
-    parser.set_defaults(outdir="out_heat_inverse_2D_64_testingS_inFU")
-    parser.set_defaults(linsolver="direct")
+    parser.set_defaults(outdir="out_heat_inverse_2D_32_MODIL_ModifiedPlot")
+    parser.set_defaults(linsolver="multigrid")
     parser.set_defaults(optimizer="adam")
     parser.set_defaults(lr=0.001)
     parser.set_defaults(double=0)
-    parser.set_defaults(multigrid=1)
     parser.set_defaults(plotext="png", plot_title=1)
-    parser.set_defaults(plot_every=500, report_every=500, history_full=10, history_every=100, frames=20)
+    parser.set_defaults(multigrid=1)
+    parser.set_defaults(plot_every=500, report_every=100, history_full=10, history_every=100, frames=40)
     return parser.parse_args()
 
 @tf.function()
@@ -442,7 +442,7 @@ def plot_func(problem, state, epoch, frame, cbinfo=None):
         im = ax.imshow(u_slice.T, origin='lower', extent=extent, cmap="YlOrBr", 
                        vmin=umin, vmax=umax, interpolation='bilinear')
         
-        ax.set_title(f't = {t_val:.2f}')
+        ax.set_title(f't = {t_idx}')
         ax.set_xlabel('x')
         if i == 0:
             ax.set_ylabel('y')
@@ -458,8 +458,9 @@ def plot_func(problem, state, epoch, frame, cbinfo=None):
                            s=1.5, alpha=0.8, edgecolor="none", facecolor="black", zorder=100)
 
     # Add a single colorbar for the entire figure
-    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.8, label='u')
-    fig.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust for suptitle
+    fig.subplots_adjust(right=0.9, top=0.9) # top=0.9 also helps with suptitle
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.01, 0.7])
+    fig.colorbar(im, cax=cbar_ax, label='u')
     fig.savefig(path0, bbox_inches="tight")
     plt.close(fig)
 
