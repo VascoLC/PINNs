@@ -1,18 +1,17 @@
 
 import os
-os.environ["DDE_BACKEND"] = "tensorflow.compat.v1"
-
+os.environ["DDE_BACKEND"] = "pytorch"
+import pandas as pd
 import deepxde as dde
 import numpy as np
 import matplotlib.pyplot as plt
 import time
 
-C = dde.Variable(1.5)
 
 def pde(x, y):
     du_tt = dde.grad.hessian(y, x, i=1, j=1)
     du_xx = dde.grad.hessian(y, x, i=0, j=0)
-    return du_tt - C**2 * du_xx
+    return du_tt -  du_xx
 
 def U_exact(x):
     x_ = x[:, 0:1]
@@ -39,7 +38,7 @@ ic_2 = dde.icbc.OperatorBC(
     lambda x, _: dde.utils.isclose(x[1], 0),
 )
 
-observe_x = np.vstack((np.linspace(-1, 1, num=500), np.full((500), 1))).T
+observe_x = np.vstack((np.linspace(-1, 1, num=4096), np.full((4096), 1))).T
 observe_y = dde.icbc.PointSetBC(observe_x, U_exact(observe_x), component=0)
 
 data = dde.data.TimePDE(
@@ -53,26 +52,39 @@ data = dde.data.TimePDE(
     num_test=4096,
 )
 
-net = dde.nn.STMsFFN(
-    [2, 64, 64, 64, 64, 1],
-    "tanh",
-    "Glorot uniform",
-    sigmas_x= [1,2,5,10],
-    sigmas_t = [1,2,5,10]
-)
+
+#net = dde.nn.STMsFFN([2, 100, 100, 100, 1],"tanh","Glorot uniform",sigmas_x= [1],sigmas_t= [1,10])
+
+
+net = dde.nn.FNN([2] + [100] * 3 + [1], "tanh", "Glorot normal")
 
 model = dde.Model(data, net)
 
-model.compile("adam", lr=0.001, metrics=["l2 relative error"], external_trainable_variables=C)
-variable = dde.callbacks.VariableValue(C, period=1000)
-
+model.compile("adam", lr=0.001, metrics=["l2 relative error"])
 start_time = time.time()
+losshistory, train_state = model.train(iterations=100)
+model.compile("L-BFGS",metrics=["l2 relative error"])
+dde.optimizers.config.set_LBFGS_options(
+    maxiter=50000,
+    maxfun=50000,
+    ftol=1e-12,   # loss tolerance
+    gtol=1e-12,   # gradient tolerance
+)
 
-losshistory, train_state = model.train(iterations=100_000, callbacks=[variable])
-
+losshistory, train_state = model.train()
 end_time = time.time()
 elapsed = end_time - start_time
 print(f"Training completed in {elapsed:.2f} seconds")
+
+# --- SAVE LOSS HISTORY TO CSV ---
+print("\nSaving loss history to loss_history.csv...")
+# Create a DataFrame with the loss for each component
+loss_df = pd.DataFrame(losshistory.loss_train, columns=['loss_pde', 'loss_bc','loss_ic','loss_ic2', 'loss_u'])
+# Insert the training step/epoch number at the beginning
+loss_df.insert(0, 'step', losshistory.steps)
+# Save to a CSV file
+loss_df.to_csv("loss_history.csv", index=False)
+print("Loss history saved successfully.")
 
 # Save and plot the solution results
 dde.saveplot(losshistory, train_state, issave=True, isplot=True)
@@ -111,3 +123,16 @@ plt.ylabel("t")
 
 plt.tight_layout()
 plt.show()
+
+# --- NEW: Save Field Coordinates and Values to CSV ---
+print("\nSaving predicted field data...")
+# Combine the flattened coordinates (x, t) and the flattened predicted values (U_pred)
+field_data = np.hstack((XT, U_pred.flatten()[:, None]))
+# Define headers for the CSV file
+field_headers = ["x", "t", "U_pred"]
+# Create a pandas DataFrame
+field_df = pd.DataFrame(field_data, columns=field_headers)
+# Save the DataFrame to a CSV file
+field_df.to_csv("predicted_field.csv", index=False)
+print("Predicted field data saved to predicted_field.csv")
+# ----------------------------------------------------

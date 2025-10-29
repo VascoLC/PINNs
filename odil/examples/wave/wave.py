@@ -20,7 +20,7 @@ def get_exact(args, t, x):
         for i in ii:
             k = i * np.pi
             u += tf.cos((x - t + 0.5) * k)
-            u += tf.cos((x + t - 0.5) * k)
+            u += tf.cos((x + t + 0.5) * k)
         u /= 2 * len(ii)
     ut = tape.gradient(u, t).numpy()
     u = u.numpy()
@@ -103,16 +103,18 @@ def parse_args():
     odil.linsolver.add_arguments(parser)
     parser.set_defaults(double=1)
     parser.set_defaults(multigrid=1)
-    parser.set_defaults(outdir='out_wave')
+    parser.set_defaults(mg_interp = 'conv')
+    parser.set_defaults(mg_axes = [True,True])
+    parser.set_defaults(outdir='out_wave_adam_Experimenting')
     parser.set_defaults(linsolver='direct')
-    parser.set_defaults(optimizer='lbfgsb')
+    parser.set_defaults(optimizer='adam')
     parser.set_defaults(lr=0.001)
     parser.set_defaults(plotext='png', plot_title=1)
-    parser.set_defaults(plot_every=100,
-                        report_every=10,
-                        history_full=5,
+    parser.set_defaults(plot_every=5000,
+                        report_every=50,
+                        history_full=10,
                         history_every=10,
-                        frames=2)
+                        frames=8)
     return parser.parse_args()
 
 
@@ -211,7 +213,7 @@ def make_problem(args):
                          dimnames=('t', 'x'),
                          lower=(0, -1),
                          upper=(1, 1),
-                         multigrid=args.multigrid,
+                         multigrid=args.multigrid,mg_interp=args.mg_interp,mg_axes=args.mg_axes,mg_nlvl=2,
                          dtype=dtype)
     if domain.multigrid:
         printlog('multigrid levels:', domain.mg_cshapes)

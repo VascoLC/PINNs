@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 import os
 import time
 
+def get_ref_k(u, mod=np):
+    # Gaussian.
+    return 0.02 * (mod.exp(-((u - 0.5) ** 2) * 20))
+
 # ------------------------------
 # 1) Neural Nets
 # ------------------------------
@@ -40,13 +44,10 @@ class NetK(tf.keras.Model):
 # ------------------------------
 
 # Load all sampled measurements
-df = pd.read_csv("data.csv")
-
-XYT_obs_np = df[["x", "y", "t"]].values.astype(np.float32)   
-u_obs_np   = df[["u"]].values.reshape(-1, 1).astype(np.float32) 
-k_obs_np   = df[["k"]].values.reshape(-1, 1).astype(np.float32)  
-
-# Convert to tensors
+df = pd.read_csv("C:/PINNs_Git/PINNs/odil/examples/heat/out_heat_inverse_2D_32_IMPOSEDPOINTS/imposed_data_with_u_2D.csv")
+XYT_obs_np = df[["x", "y", "t"]].values.astype(np.float32)
+u_obs_np   = df[["u"]].values.reshape(-1, 1).astype(np.float32)
+k_obs_np   = get_ref_k(u_obs_np)
 XYT_obs = tf.convert_to_tensor(XYT_obs_np)
 u_obs   = tf.convert_to_tensor(u_obs_np)
 k_obs   = tf.convert_to_tensor(k_obs_np)
@@ -68,7 +69,7 @@ xyt_ic = tf.convert_to_tensor(xyt_ic_np)
 u_ic   = tf.convert_to_tensor(u_ic_np)
 
 # 3.2) Boundary conditions
-n_bc = 200 
+n_bc = 400 
 
 # Dirichlet BC on x=0 and x=1
 # x=0
@@ -177,11 +178,99 @@ def compute_loss(xyt_domain, xyt_bc_dirichlet, u_bc_dirichlet, xyt_bc_neumann, x
     k_pred_obs = net_k(u_pred_obs)
     loss_k  = tf.reduce_mean(tf.square(k_pred_obs - k_obs))
 
-    # The loss_k weight is the most important, without it convergence is not achieved so easily
     total_loss = (loss_pde + loss_ic + loss_bc_dirichlet + loss_bc_neumann +
-                  loss_u + 100 * loss_k)
+                  loss_u)
 
     return total_loss, loss_u, loss_k
+
+# ------------------------------
+# Plot Function
+# ------------------------------
+def plot_and_save_fields(net_u, net_k, epoch, folder_name):
+    """
+    Generates plots for u(x,y,t) and k(u) vs u at multiple time slices.
+    """
+    os.makedirs(folder_name, exist_ok=True)
+    
+    nx = ny = 64
+    x = np.linspace(0, 1, nx)
+    y = np.linspace(0, 1, ny)
+    X, Y = np.meshgrid(x, y)
+    
+    time_slices = [0.0, 0.25, 0.5, 0.75, 1.0]
+
+    # --- Setup Figure 1 for Temperature u(x,y,t) ---
+    fig_u, axes_u = plt.subplots(1, len(time_slices), figsize=(18, 4), sharey=True)
+    fig_u.suptitle(f'Temperature Field u(x,y,t)', fontsize=16)
+    
+    # --- Setup Figure 2 for k(u) vs u ---
+    fig_k, axes_k = plt.subplots(1, len(time_slices), figsize=(18, 4), sharey=True)
+    fig_k.suptitle(f'Inferred Conductivity k(u) ', fontsize=16)
+    mappable_for_colorbar = None
+
+    # --- Loop through time slices to calculate and plot both ---
+    for i, t in enumerate(time_slices):
+        T = t * np.ones_like(X)
+        XYT_grid = np.stack([X.ravel(), Y.ravel(), T.ravel()], axis=1).astype(np.float32)
+        XYT_tensor = tf.convert_to_tensor(XYT_grid)
+
+        # Calculate both u and k from the networks
+        u_tensor = net_u(XYT_tensor, training=False)
+        k_tensor = net_k(u_tensor, training=False)
+
+        u_field = u_tensor.numpy().reshape(nx, ny)
+        k_field = k_tensor.numpy().reshape(nx, ny)
+
+    
+        # --- Plot temperature field on Figure 1 ---
+        ax_u = axes_u[i]
+        im_u = ax_u.contourf(X, Y, u_field, levels=100, cmap='YlOrBr', vmin=0, vmax=1)
+
+        # 2. Capture the data from the first plot (t=0) only <--
+        if i == 0:
+            mappable_for_colorbar = im_u
+        ax_u.set_title(f't = {t:.2f}')
+        ax_u.set_xlabel('x')
+        if i == 0:
+            ax_u.set_ylabel('y')
+        ax_u.axis("equal")
+
+        # --- Plot k(u) vs u scatter on Figure 2 ---
+        ax_k = axes_k[i]
+        ax_k.plot(u_field.flatten(), k_field.flatten(), label='Inferred k(u)', color='blue')
+        
+        # Overlay the true k(u) for reference
+        u_true_range = np.linspace(np.min(u_field), np.max(u_field), 100)
+        k_true = get_ref_k(u_true_range)
+        ax_k.plot(u_true_range, k_true, label='Reference k(u)', color='red') 
+        
+        ax_k.set_title(f't = {t:.2f}')
+        ax_k.set_xlabel('u(x,y,t)')
+        ax_k.set_xlim(np.min(u_field), np.max(u_field))
+        ax_k.set_ylim(0, 0.03)
+        ax_k.grid(True, linestyle='--', alpha=0.6)
+        if i == 0:
+            ax_k.set_ylabel('k(u)')
+        if i == len(time_slices) - 1:
+            ax_k.legend()
+
+    # --- Finalize and Save Figure 1 (Temperature) ---
+    fig_u.subplots_adjust(right=0.85)
+    cbar_ax_u = fig_u.add_axes([0.88, 0.15, 0.01, 0.7])
+    if mappable_for_colorbar:
+        fig_u.colorbar(mappable_for_colorbar, cax=cbar_ax_u, label='u(x,y,t)')
+    u_filename = os.path.join(folder_name, f"temperature_epoch_{str(epoch).zfill(6)}.png")
+    fig_u.savefig(u_filename)
+    plt.close(fig_u)
+
+    # --- Finalize and Save Figure 2 (k vs u) ---
+    k_filename = os.path.join(folder_name, f"conductivity_epoch_{str(epoch).zfill(6)}.png")
+    fig_k.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent title overlap
+    fig_k.savefig(k_filename)
+    plt.close(fig_k)
+    
+    print(f"--- Saved plots for epoch {epoch} ---")
+
 
 # ------------------------------
 # 8) Training loop (Adam)
@@ -192,11 +281,14 @@ num_obs = XYT_obs_np.shape[0]
 num_batches = int(np.ceil(num_obs / batch_size_obs))
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-epochs = 5000 # In this case corresponds to 30000 iterations of the optimiser
-
+epochs = 25000 
 loss_history = [] 
 
 start_time = time.perf_counter()
+
+results_folder = 'training_results_5Batch'
+print("Plotting initial random state (Epoch 0)...")
+plot_and_save_fields(net_u, net_k, 0, results_folder)
 
 for epoch in range(1, epochs+1):
     indices = np.random.permutation(num_obs)
@@ -222,6 +314,11 @@ for epoch in range(1, epochs+1):
 
     if epoch % 200 == 0:
         print(f"Epoch {epoch:04d} — Total Loss: {total_loss.numpy():.4e} | Loss_u: {loss_u.numpy():.4e} | Loss_k: {loss_k.numpy():.4e}")
+        df_loss = pd.DataFrame(loss_history, columns=["epoch", "total_loss", "loss_u", "loss_k"])
+        df_loss.to_csv("training_loss_log_5Batch.csv", index=False)
+        print("Saved training_loss_log.csv")
+    if epoch % 2500 == 0:
+        plot_and_save_fields(net_u, net_k, epoch, results_folder)
 
 end_time = time.perf_counter()
 elapsed = end_time - start_time
@@ -230,76 +327,9 @@ print(f"\n*** Training completed in {elapsed:.2f} seconds. ***")
 # ------------------------------
 # 9) Plot and saving
 # ------------------------------
-
-nx = ny = 100
-x = np.linspace(0, 1, nx)
-y = np.linspace(0, 1, ny)
-X, Y = np.meshgrid(x, y)
-
-times_to_save = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-
-os.makedirs("fields_over_time", exist_ok=True)
-
-# -- Prepare figure --
-fig, axes = plt.subplots(2, 3, figsize=(15, 8))
-axes = axes.flatten()
-
-for i,t in enumerate(times_to_save):
-    T = t * np.ones_like(X)
-
-    XYT_grid = np.stack([X.ravel(), Y.ravel(), T.ravel()], axis=1).astype(np.float32)
-    XYT_tensor = tf.convert_to_tensor(XYT_grid)
-
-    u_tensor = net_u(XYT_tensor, training=False)
-    k_tensor = net_k(u_tensor, training=False)
-
-    u_field = u_tensor.numpy().reshape(nx, ny)
-    k_field = k_tensor.numpy().reshape(nx, ny)
-
-    df_final = pd.DataFrame({
-        "x": X.flatten(),
-        "y": Y.flatten(),
-        "t": T.flatten(),
-        "u": u_field.flatten(),
-        "k": k_field.flatten(),
-    })
-
-    df_final.to_csv(f"fields_over_time/field_at_t_{t:.1f}.csv", index=False)
-    print(f"Saved field_at_t_{t:.1f}.csv")
-        # Plot
-    ax = axes[i]
-    cf = ax.contourf(X, Y, u_field, levels=100)
-    fig.colorbar(cf, ax=ax, fraction=0.045, pad=0.04)
-    ax.set_title(f"u(x, y, t={t:.1f})")
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_aspect('equal')
-
-plt.tight_layout()
-plt.show()
-
+print("\nGenerating final high-resolution plots...")
+plot_and_save_fields(net_u, net_k, epochs, "final_results_5Batch")
 
 df_loss = pd.DataFrame(loss_history, columns=["epoch", "total_loss", "loss_u", "loss_k"])
-df_loss.to_csv("training_loss_log.csv", index=False)
-
-'''
-# Plot u(x,y,t)
-plt.figure(figsize=(6,5))
-cf = plt.contourf(X, Y, u_field, levels=100)
-plt.colorbar(cf, label="u(x,y,t=1)")
-plt.title("Predicted Temperature at t = 1")
-plt.xlabel("x"); plt.ylabel("y")
-plt.axis("equal")
-plt.tight_layout()
-'''
-
-
-# Plot k vs u 
-plt.figure(figsize=(5,4))
-plt.scatter(u_field, k_field, s=10, alpha=0.6)
-plt.xlabel("u"); plt.ylabel("k(u)")
-plt.title("Learned Conductivity vs Temperature (t = 1)")
-plt.grid(True)
-plt.tight_layout()
-
-plt.show()
+df_loss.to_csv("training_loss_log_5Batch.csv", index=False)
+print("Saved training_loss_log.csv")

@@ -1,11 +1,13 @@
 import deepxde as dde
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd # Import pandas
 from deepxde.backend import tf
 import os
 from datetime import datetime
 import time
 
+# --- Your original code setup remains the same ---
 C = dde.Variable(1.5)
 
 def pde(x, y):
@@ -47,7 +49,7 @@ data = dde.data.TimePDE(
     [bc, ic,ic_2, observe_y],
     num_domain=4096,
     num_boundary=400,
-    num_initial=100,
+    num_initial=200,
     solution=U_exact,
     num_test=4096,
 )
@@ -71,21 +73,45 @@ end_time = time.time()
 elapsed = end_time - start_time
 print(f"Training completed in {elapsed:.2f} seconds")
 
+# --- SAVE LOSS HISTORY TO CSV ---
+print("\nSaving loss history to loss_history.csv...")
+# Create a DataFrame with the loss for each component
+loss_df = pd.DataFrame(losshistory.loss_train, columns=['loss_pde', 'loss_bc','loss_ic','loss_ic2', 'loss_u'])
+# Insert the training step/epoch number at the beginning
+loss_df.insert(0, 'step', losshistory.steps)
+# Save to a CSV file
+loss_df.to_csv("loss_history.csv", index=False)
+print("Loss history saved successfully.")
+# ----------------------------------------
+
 # Save and plot the solution results
 dde.saveplot(losshistory, train_state, issave=True, isplot=True)
 
-x_test = np.linspace(-1, 1, 500)  
-t_test = np.linspace(0, 1, 500)   
+x_test = np.linspace(-1, 1, 500)
+t_test = np.linspace(0, 1, 500)
 
 # Create a meshgrid of x and t values
 X, T = np.meshgrid(x_test, t_test)
 XT = np.hstack((X.flatten()[:, None], T.flatten()[:, None]))
 
 # Get the PINN solution for these points
-U_pred = model.predict(XT).reshape(X.shape)  # reshape to match meshgrid shape
+U_pred = model.predict(XT).reshape(X.shape)
 
 # Get the exact solution for these points
 U_ref = U_exact(XT).reshape(X.shape)
+
+# --- NEW: Save Field Coordinates and Values to CSV ---
+print("\nSaving predicted field data...")
+# Combine the flattened coordinates (x, t) and the flattened predicted values (U_pred)
+field_data = np.hstack((XT, U_pred.flatten()[:, None]))
+# Define headers for the CSV file
+field_headers = ["x", "t", "U_pred"]
+# Create a pandas DataFrame
+field_df = pd.DataFrame(field_data, columns=field_headers)
+# Save the DataFrame to a CSV file
+field_df.to_csv("predicted_field.csv", index=False)
+print("Predicted field data saved to predicted_field.csv")
+# ----------------------------------------------------
 
 # Plotting the comparison
 plt.figure(figsize=(12, 5))

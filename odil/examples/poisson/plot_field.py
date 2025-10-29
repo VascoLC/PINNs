@@ -33,7 +33,7 @@ def plot_field(path, u_odil, u_ref, vmax):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, default='out_poisson/data.pickle')
+    parser.add_argument("--data", type=str, default='out_poisson_adam/data_00008.pickle')
     parser.add_argument("--out", type=str, default='out_poisson/field')
     parser.add_argument("--vmax", type=float, default=1)
     args = parser.parse_args()

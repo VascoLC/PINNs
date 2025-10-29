@@ -7,14 +7,14 @@ from tensorflow import keras
 
 plot_configs = [
     {
-        'path': 'C:\PINNs_Git\PINNs\Heat_inverse\Heat_Inverse_1D_FBatch_Nk/training_loss_log_1D_solution_NoBatching_NoK.csv',
+        'path': 'C:\PINNs_Git\PINNs\Poisson\Poisson_Fourier_100k_k2/loss_history.csv',
         'color': 'red',
-        'label': 'PINN: Full Data Set'
+        'label': 'PINN: MsFFN ADAM'
     },
-    {
-        'path': 'C:\PINNs_Git\PINNs\Heat_inverse\Heat_inverse_1D_5Batch_Nk/training_loss_log_1D_solution_Batching_NoK.csv',
-        'color': 'green',
-        'label': 'PINN: 5 Data Batches'
+        {
+        'path': 'C:\PINNs_Git\PINNs\Poisson\Poisson_variants/loss_history.csv',
+        'color': 'orange',
+        'label': 'PINN: Full Batch ADAM '
     }
 ]
 
@@ -25,24 +25,28 @@ ax = plt.gca()
 for config in plot_configs:
 
     df = pd.read_csv(config['path'])
+    epochs = df[['step']].values.astype(np.float32)
+    #loss_k = df[['error_k']].values.astype(np.float32)
+    loss_u = df[['loss_q']].values.astype(np.float32)
 
     # Filter the DataFrame to get every 10th epoch
-    df_filtered = df[(df['epoch'] <= 100) | (df['epoch'] % 500 == 0)]
-
+    #df_filtered = df[(df['epoch'] <= 100) | (df['epoch'] % 500 == 0)]
     # Extract epochs and loss_k from the filtered DataFrame
-    epochs = df_filtered["epoch"].values.astype(np.float32)
-    loss_k = df_filtered["loss_k"].values.astype(np.float32)
+    #epochs = df_filtered["epoch"].values.astype(np.float32)
+    #loss_u = df_filtered["loss_u"].values.astype(np.float32)
+
+    loss_u = np.sqrt(loss_u)
     
-    plt.plot(epochs, np.sqrt(loss_k)/0.02, linewidth=2, color=config['color'], label=config['label'])
+    plt.plot(epochs, loss_u, linewidth=2, color=config['color'], label=config['label'])
 
 plt.legend()
 plt.xlabel("epoch")
-plt.ylabel("Conductivity Loss")
+plt.ylabel("Loss")
 plt.xscale('log')
 plt.yscale('log')
 plt.tight_layout()
 plt.xlim([0, 1e6])
-plt.ylim([10e-4, 10e-0])
+plt.ylim([10e-4, 10e2])
 plt.grid()
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)

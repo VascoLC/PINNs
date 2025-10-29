@@ -37,7 +37,7 @@ class LbfgsbOptimizer(Optimizer):
                  pgtol=0,
                  m=50,
                  maxls=50,
-                 factr=0,
+                 factr=1e7,
                  dtype=None,
                  mod=None,
                  **kwargs):

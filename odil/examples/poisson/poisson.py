@@ -4,8 +4,8 @@ import argparse
 import numpy as np
 import pickle
 import odil
-import odil.optimizer  
-import os  
+import odil.optimizer
+import os
 from odil import plotutil
 import matplotlib.pyplot as plt
 from odil import printlog
@@ -140,6 +140,12 @@ def parse_args():
                         type=int,
                         default=0,
                         help="Dump XMF+RAW files")
+    # <<< NEW FEATURE ARGUMENT >>>
+    parser.add_argument('--dump_csv',
+                        type=int,
+                        default=1,
+                        help="Dump u field with coordinates to a CSV file")
+    # <<< END NEW FEATURE ARGUMENT >>>
     parser.add_argument('--plot', type=int, default=1, help="Enable plotting")
     parser.add_argument('--ref',
                         type=str,
@@ -162,18 +168,18 @@ def parse_args():
     odil.util.add_arguments(parser)
     odil.linsolver.add_arguments(parser)
 
-    parser.set_defaults(frames=4,
+    parser.set_defaults(frames=8,
                         report_every=100,
-                        history_every=10,
-                        plot_every=100,
+                        history_every=100,
+                        plot_every=5000,
                         history_full=50)
 
     parser.set_defaults(optimizer='adam')
     parser.set_defaults(multigrid=1)
-    parser.set_defaults(lr=0.005)
+    parser.set_defaults(lr=0.001)
     parser.set_defaults(double=1)
 
-    parser.set_defaults(outdir='out_poisson')
+    parser.set_defaults(outdir='out_poisson_adam_M')
     return parser.parse_args()
 
 
@@ -183,6 +189,50 @@ def write_field(u, name, path, domain, cellbased):
     axes = tuple(reversed(range(ndim)))
     u = np.transpose(u, axes)
     odil.write_raw_with_xmf(u, path, spacing=dw, name=name, cell=cellbased)
+
+# <<< NEW FEATURE FUNCTION >>>
+# <<< NEW FEATURE FUNCTION >>>
+def write_csv(filepath, domain, u_field):
+    """
+    Writes coordinate and field data to a CSV file.
+    Supports 1D, 2D, and 3D domains.
+    """
+    # Import TensorFlow inside the function where it's needed
+    import tensorflow as tf
+
+    ndim = domain.ndim
+    coords = domain.points()
+    
+    # --- CORRECTED PART START ---
+    # Use tf.reshape and convert to numpy array
+    u_flat = tf.reshape(u_field, [-1]).numpy()
+
+    if ndim == 1:
+        header = "x,u"
+        # Convert coordinates to numpy arrays
+        x_flat = tf.reshape(coords[0], [-1]).numpy()
+        data = np.stack([x_flat, u_flat], axis=1)
+    elif ndim == 2:
+        header = "x,y,u"
+        # Convert coordinates to numpy arrays
+        x_flat = tf.reshape(coords[0], [-1]).numpy()
+        y_flat = tf.reshape(coords[1], [-1]).numpy()
+        data = np.stack([x_flat, y_flat, u_flat], axis=1)
+    elif ndim == 3:
+        header = "x,y,z,u"
+        # Convert coordinates to numpy arrays
+        x_flat = tf.reshape(coords[0], [-1]).numpy()
+        y_flat = tf.reshape(coords[1], [-1]).numpy()
+        z_flat = tf.reshape(coords[2], [-1]).numpy()
+        data = np.stack([x_flat, y_flat, z_flat, u_flat], axis=1)
+    # --- CORRECTED PART END ---
+    else:
+        printlog(f"CSV dump not supported for ndim={ndim}")
+        return
+
+    np.savetxt(filepath, data, delimiter=',', header=header, comments='')
+# <<< END NEW FEATURE FUNCTION >>>
+# <<< END NEW FEATURE FUNCTION >>>
 
 
 def plot_func(problem, state, epoch, frame, cbinfo):
@@ -222,6 +272,14 @@ def plot_func(problem, state, epoch, frame, cbinfo):
         path = key + '{}.xdmf2'.format(suff)
         write_field(u, key, path, domain, args.cellbased)
         paths.append(path)
+
+    # <<< NEW FEATURE INTEGRATION >>>
+    if args.dump_csv and ndim in [1, 2, 3]:
+        u = domain.field(state, key)
+        path = "data{}.csv".format(suff)
+        write_csv(path, domain, u)
+        paths.append(path)
+    # <<< END NEW FEATURE INTEGRATION >>>
 
     if args.dump_data:
         x = domain.points()
@@ -264,7 +322,7 @@ def report_func(problem, state, epoch, cbinfo):
     for key in state.fields:
         res[key] = get_error(domain, extra, state, key)
     printlog('error: ' + ', '.join('{}:{:.5g}'.format(*item)
-                                   for item in res.items()))
+                                  for item in res.items()))
 
 
 def make_problem(args):
